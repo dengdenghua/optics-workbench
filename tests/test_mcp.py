@@ -1,5 +1,6 @@
 """Protocol boundary tests plus isolated real-core subprocess workflows."""
 import io
+import copy
 import json
 import os
 from pathlib import Path
@@ -40,6 +41,19 @@ def tool(name, args=None, request_id=2):
 def unpack(reply):
     result = reply["result"]
     return json.loads(result["content"][0]["text"])["data"]
+
+
+def scene_fixture():
+    """Synthetic unfolded meridional scene, never loaded from a personal project."""
+    return {"schema_version": 1, "units": "mm", "elements": [
+        {"id": "source", "kind": "source", "label": "演示光源", "z_mm": 0,
+         "y_mm": 0, "aperture_mm": 1, "width_mm": 1},
+        {"id": "lens", "kind": "lens", "label": "薄透镜符号", "z_mm": 20,
+         "y_mm": 0, "aperture_mm": 10, "width_mm": 2, "focal_mm": 20},
+        {"id": "screen", "kind": "screen", "label": "目标面", "z_mm": 40,
+         "y_mm": 0, "aperture_mm": 10, "width_mm": 1}],
+        "rays": {"half_angle_deg": 5, "rays_per_point": 5,
+                 "source_points": 3, "wavelength_nm": 550}}
 
 
 class ProtocolTests(unittest.TestCase):
@@ -136,6 +150,42 @@ class ProtocolTests(unittest.TestCase):
         self.assertTrue(self.server.handle(tool("optics_save_prototype", {"project": []}))["result"]["isError"])
         self.wb.save_project.assert_not_called()
 
+    def test_scene_argument_validation_prevents_core_calls(self):
+        cases = [
+            ("optics_get_scene", {}, "scene"),
+            ("optics_get_scene", {"project_id": ""}, "scene"),
+            ("optics_trace_scene", {"scene": []}, "preview_scene"),
+            ("optics_save_scene", {"project_id": "p", "version": True, "scene": {}}, "save_scene"),
+            ("optics_save_scene", {"project_id": "p", "version": 0, "scene": {}}, "save_scene"),
+            ("optics_save_scene", {"project_id": "p", "version": "1", "scene": {}}, "save_scene"),
+            ("optics_save_scene", {"project_id": "p", "scene": {}}, "save_scene"),
+            ("optics_apply_design", {"project_id": "p", "version": 1, "parameter_updates": []}, "apply_design"),
+            ("optics_apply_design", {"project_id": "p", "version": 1, "scene": None}, "apply_design"),
+            ("optics_apply_design", {"project_id": "p", "version": 1, "note": "x" * 2001}, "apply_design"),
+            ("optics_apply_design", {"project_id": "p", "version": 1, "path": "unaccepted"}, "apply_design"),
+        ]
+        for name, args, method in cases:
+            with self.subTest(tool=name, arguments=args):
+                wb = Mock()
+                reply = MCPServer(wb).handle(modern("tools/call", {"name": name, "arguments": args}))
+                self.assertTrue(reply["result"]["isError"])
+                getattr(wb, method).assert_not_called()
+
+    def test_read_only_scene_tools_are_visible_but_mutations_cannot_execute(self):
+        server = MCPServer(self.wb, read_only=True)
+        names = {t["name"] for t in server.handle(modern("tools/list"))["result"]["tools"]}
+        self.assertTrue({"optics_get_scene", "optics_trace_scene"} <= names)
+        for name in ("optics_save_scene", "optics_apply_design"):
+            self.assertNotIn(name, names)
+            reply = server.handle(modern("tools/call", {"name": name, "arguments": {
+                "project_id": "p", "version": 1, "scene": scene_fixture()}}))
+            self.assertEqual(reply["error"]["code"], -32602)
+        self.wb.save_scene.assert_not_called()
+        self.wb.apply_design.assert_not_called()
+        self.wb.preview_scene.return_value = {"kind": "paraxial_ray_fan"}
+        reply = server.handle(modern("tools/call", {"name": "optics_trace_scene", "arguments": {"scene": scene_fixture()}}))
+        self.assertEqual(unpack(reply)["kind"], "paraxial_ray_fan")
+
     def test_core_validation_and_internal_errors(self):
         initialize(self.server)
         self.wb.save_project.side_effect = ValueError("version conflict")
@@ -159,6 +209,11 @@ class ProtocolTests(unittest.TestCase):
             ("optics_search_models", {"limit": 5}, "models", (), {"limit": 5}),
             ("optics_list_prototypes", {}, "projects", (), {}),
             ("optics_get_prototype", {"project_id": "p1"}, "project", ("p1",), {}),
+            ("optics_get_scene", {"project_id": "p1"}, "scene", ("p1",), {}),
+            ("optics_trace_scene", {"scene": scene_fixture()}, "preview_scene", (scene_fixture(),), {}),
+            ("optics_save_scene", {"project_id": "p1", "version": 2, "scene": scene_fixture()}, "save_scene", ("p1", 2, scene_fixture()), {}),
+            ("optics_apply_design", {"project_id": "p1", "version": 2, "scene": scene_fixture(), "parameter_updates": {"source_lumens": 800}, "note": "试验起点"},
+             "apply_design", ("p1", 2), {"scene": scene_fixture(), "parameter_updates": {"source_lumens": 800}, "note": "试验起点"}),
             ("optics_create_prototype", {"template": "compact"}, "new_project", (), {"template": "compact"}),
             ("optics_calculate_budget", {"project": {"parameters": {}}}, "calculate", ({"parameters": {}},), {}),
             ("optics_save_prototype", {"project": {"version": 1}}, "save_project", ({"version": 1},), {}),
@@ -209,6 +264,114 @@ class ProtocolTests(unittest.TestCase):
 
 
 class RealCoreMCPTests(unittest.TestCase):
+    def test_scene_roundtrip_atomic_design_and_failed_write_leave_revision_unchanged(self):
+        from optics_workbench.core import Workbench
+        with tempfile.TemporaryDirectory() as data_dir:
+            wb = Workbench(data_dir=data_dir)
+            server = MCPServer(wb)
+            initialize(server)
+            project = unpack(server.handle(tool("optics_create_prototype", {"name": "场景往返"})))
+
+            def call(name, arguments):
+                reply = server.handle(tool(name, arguments))
+                self.assertFalse(reply["result"].get("isError"), reply)
+                return unpack(reply)
+
+            envelope = call("optics_get_scene", {"project_id": project["id"]})
+            self.assertEqual(envelope["version"], project["version"])
+            self.assertEqual(envelope["trace"]["kind"], "paraxial_ray_fan")
+            self.assertEqual(wb.project(project["id"]), project)
+            scene = scene_fixture()
+            trace = call("optics_trace_scene", {"scene": scene})
+            self.assertEqual(trace["summary"]["launched"], 15)
+            self.assertEqual(trace, call("optics_trace_scene", {"scene": scene}))
+            for mutate in (
+                lambda s: s["rays"].update(source_points=True),
+                lambda s: s["rays"].update(half_angle_deg=16),
+                lambda s: s["elements"][1].update(unsupported_field=1),
+            ):
+                invalid = copy.deepcopy(scene)
+                mutate(invalid)
+                rejected = server.handle(tool("optics_trace_scene", {"scene": invalid}))
+                self.assertTrue(rejected["result"]["isError"], rejected)
+                self.assertEqual(wb.project(project["id"]), project)
+            saved = call("optics_save_scene", {"project_id": project["id"], "version": project["version"], "scene": scene})
+            self.assertEqual(saved["scene"], scene)
+            self.assertEqual(saved["version"], project["version"] + 1)
+            self.assertEqual(saved["parameters"], project["parameters"])
+            changed = copy.deepcopy(scene)
+            changed["elements"][1]["focal_mm"] = 30
+            applied = call("optics_apply_design", {"project_id": saved["id"], "version": saved["version"],
+                "scene": changed, "parameter_updates": {"source_lumens": 1200}, "note": "条件起算"})
+            self.assertEqual(applied["version"], saved["version"] + 1)
+            self.assertEqual(applied["scene"], changed)
+            self.assertEqual(applied["parameters"]["source_lumens"], 1200)
+            self.assertIn("条件起算", applied["notes"])
+            with wb.connect() as db:
+                revisions = db.execute("SELECT count(*) FROM project_revisions WHERE project_id=?", (project["id"],)).fetchone()[0]
+            self.assertEqual(revisions, 3)
+            invalid_scene = copy.deepcopy(changed)
+            invalid_scene["elements"][1]["focal_mm"] = 0
+            cases = [
+                {"version": saved["version"], "scene": scene},
+                {"version": applied["version"], "scene": invalid_scene},
+                {"version": applied["version"], "scene": scene, "parameter_updates": {"source_lumens": -1}},
+                {"version": applied["version"], "parameter_updates": {"not_a_parameter": 1}},
+                {"version": applied["version"]},
+            ]
+            for arguments in cases:
+                reply = server.handle(tool("optics_apply_design", {"project_id": project["id"], **arguments}))
+                self.assertTrue(reply["result"]["isError"], reply)
+                self.assertEqual(wb.project(project["id"]), applied)
+            with wb.connect() as db:
+                self.assertEqual(db.execute("SELECT count(*) FROM project_revisions WHERE project_id=?", (project["id"],)).fetchone()[0], revisions)
+            legacy_save = copy.deepcopy(applied)
+            legacy_save.pop("scene")
+            preserved = call("optics_save_prototype", {"project": legacy_save})
+            self.assertEqual(preserved["scene"], changed)
+            exported = call("optics_export_prototype", {"project_id": preserved["id"]})
+            self.assertEqual(exported["project"]["scene"], changed)
+            self.assertNotIn(data_dir, json.dumps(exported))
+            imported = call("optics_import_prototype", {"payload": exported})
+            self.assertNotEqual(imported["id"], preserved["id"])
+            self.assertEqual(imported["scene"], changed)
+            self.assertEqual(imported["parameters"], preserved["parameters"])
+
+    def test_scene_tools_through_stdio_subprocess(self):
+        from optics_workbench.core import Workbench
+        with tempfile.TemporaryDirectory() as data_dir:
+            wb = Workbench(data_dir=data_dir)
+            project = wb.new_project(name="隔离的场景传输")
+            scene = scene_fixture()
+            actions = [
+                ("optics_get_scene", {"project_id": project["id"]}),
+                ("optics_trace_scene", {"scene": scene}),
+                ("optics_save_scene", {"project_id": project["id"], "version": 1, "scene": scene}),
+                ("optics_apply_design", {"project_id": project["id"], "version": 2, "parameter_updates": {"source_lumens": 3210}}),
+                ("optics_save_scene", {"project_id": project["id"], "version": 2, "scene": scene}),
+                ("optics_get_scene", {"project_id": project["id"]}),
+                ("optics_export_prototype", {"project_id": project["id"]}),
+            ]
+            messages = [modern("tools/call", {"name": name, "arguments": args}, request_id=i)
+                        for i, (name, args) in enumerate(actions, 1)]
+            env = dict(os.environ)
+            for key in ("OPTICS_WORKBENCH_CONFIG", "OPTICS_WORKBENCH_DATA"):
+                env.pop(key, None)
+            completed = subprocess.run([sys.executable, "-B", "-m", "optics_workbench.mcp_server", "--data-dir", data_dir],
+                input="".join(json.dumps(m, ensure_ascii=False) + "\n" for m in messages).encode("utf8"),
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
+                cwd=Path(__file__).resolve().parents[1], timeout=30)
+            self.assertEqual(completed.returncode, 0, completed.stderr.decode("utf8"))
+            replies = [json.loads(line) for line in completed.stdout.splitlines()]
+            self.assertEqual([r["id"] for r in replies], list(range(1, 8)))
+            self.assertEqual(unpack(replies[1])["kind"], "paraxial_ray_fan")
+            self.assertEqual(unpack(replies[2])["scene"], scene)
+            self.assertEqual(unpack(replies[3])["version"], 3)
+            self.assertTrue(replies[4]["result"]["isError"])
+            self.assertEqual(unpack(replies[5])["version"], 3)
+            self.assertEqual(unpack(replies[6])["project"]["scene"], scene)
+            self.assertEqual(unpack(replies[6])["project"]["parameters"]["source_lumens"], 3210)
+
     def test_temp_database_prototype_roundtrip_and_conflict(self):
         from optics_workbench.core import Workbench
         with tempfile.TemporaryDirectory() as data_dir:

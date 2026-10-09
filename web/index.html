@@ -5,8 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <meta name="theme-color" content="#172c36">
-  <title>Optics Workbench · 光机参数工作台</title>
+  <title>Optics Workbench · AI 光学工作台</title>
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/optical-view.css">
+  <script src="/optical-view.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -33,18 +35,22 @@
       <main id="main" tabindex="-1">
         <div id="global-error" class="banner error-banner" role="alert" hidden></div>
         <section id="view-workspace" class="view" aria-labelledby="workspace-title">
-          <div class="page-heading"><div><div class="eyebrow">PARAMETRIC OPTICAL DESIGN</div><h1 id="workspace-title">光机参数工作台<span class="title-dot">.</span></h1><p>从光源到成像面，建立一个有依据的参数原型。</p></div><div class="heading-actions"><button id="import-button" class="button button-secondary" type="button">导入原型</button><button id="new-button" class="button button-primary" type="button"><span aria-hidden="true">＋</span> 新建原型</button><input id="import-file" type="file" accept=".json,application/json" hidden></div></div>
-          <div class="workspace-intro"><span class="pill pill-teal">参数估算</span><span>模板起始值是演示假设；结果用于早期预算，需通过模型、材料数据与实测继续验证。</span></div>
+          <div class="page-heading"><div><div class="eyebrow">DESCRIBE · EXPLORE · REFINE</div><h1 id="workspace-title">AI 光学工作台<span class="title-dot">.</span></h1><p>用自然语言提出想法，在光路中逐步验证。</p></div><div class="heading-actions"><button id="import-button" class="button button-secondary" type="button">导入原型</button><button id="new-button" class="button button-primary" type="button"><span aria-hidden="true">＋</span> 新建原型</button><input id="import-file" type="file" accept=".json,application/json" hidden></div></div>
+          <div class="workspace-intro"><span class="pill pill-teal">可交互光路</span><span>符号化镜片 · 近轴代表光线 · 独立能量预算。把起算与真实处方、测量区分开。</span></div>
           <div class="project-bar"><div class="project-picker"><label for="project-select">当前原型</label><select id="project-select"><option value="">正在加载…</option></select></div><div class="project-name-wrap"><label for="project-name">原型名称</label><input id="project-name" type="text" maxlength="120" placeholder="为原型命名" autocomplete="off"></div><div class="project-actions"><span id="save-status" class="save-status">尚未载入</span><button id="clone-button" class="button button-quiet" type="button">复制</button><button id="export-button" class="button button-quiet" type="button">导出</button><button id="save-button" class="button button-dark" type="button">保存原型</button></div></div>
           <p class="export-disclosure">导出 JSON 包含原型名称、备注及器件引用，分享前请检查；不会附上原始文件或模型。</p>
           <div id="workspace-empty" class="empty-state" hidden><span class="empty-symbol" aria-hidden="true">◇</span><h2>从一个原型开始</h2><p>选择演示模板，再逐步替换为你的光源与器件参数。</p><button id="empty-new-button" class="button button-primary" type="button">新建参数原型</button></div>
           <div id="workspace-content" hidden>
+            <div id="external-update" class="external-update" role="status" hidden><span id="external-update-text"></span><div><button id="external-copy" class="button button-secondary button-small" type="button">我的修改另存为副本</button><button id="external-reload" class="button button-dark button-small" type="button">载入外部版本</button></div></div>
+            <section id="visual-workspace" class="visual-workspace" aria-label="光路编辑与 AI 助理"></section>
+            <details class="budget-drawer"><summary><span>标量参数与能量预算</span><span class="muted">与光路场景分别编辑 · 展开查看</span></summary>
             <div class="section-caption"><span>01 / 光学链路</span><span class="muted">点击模块编辑参数</span></div>
             <div id="optical-chain" class="optical-chain" role="tablist" aria-label="光学链路模块"></div>
             <div class="workbench-grid">
               <section class="parameter-panel panel" aria-labelledby="parameter-title"><div class="panel-heading"><div><div id="parameter-eyebrow" class="eyebrow">LIGHT SOURCE</div><h2 id="parameter-title">光源与收集条件</h2></div><span id="parameter-number" class="section-number" aria-hidden="true">01</span></div><p id="parameter-description" class="panel-description"></p><div id="component-selection" class="component-selection" hidden></div><form id="parameter-form" novalidate><div id="parameter-fields" class="field-grid"></div></form><div id="parameter-footnote" class="parameter-footnote"></div><details class="project-notes"><summary>设计备注与采用依据</summary><label class="sr-only" for="project-notes">设计备注与采用依据</label><textarea id="project-notes" rows="5" placeholder="记录需求、假设，以及采用某个历史参数的原因…"></textarea></details></section>
               <aside class="results-column" aria-label="计算结果"><section class="results-panel panel"><div class="panel-heading results-heading"><div><div class="eyebrow">ANALYTICAL BUDGET</div><h2>原型预算</h2></div><span id="result-status" class="pill pill-neutral">等待计算</span></div><div class="result-type">条件性计算 · 非实测结果</div><div id="results-body"></div><button id="calculate-button" class="button button-primary calculate-button" type="button">计算原型预算 <span aria-hidden="true">↗</span></button><div id="calculation-caption" class="calculation-caption">修改参数后，请重新计算。</div></section><section id="checks-panel" class="checks-panel panel" hidden><div class="compact-heading"><h3>边界与检查</h3><span id="checks-count" class="pill pill-neutral"></span></div><div id="checks-list"></div><details id="assumptions-details" class="assumptions"><summary>查看计算假设</summary><ul id="assumptions-list"></ul></details></section></aside>
             </div>
+            </details>
           </div>
         </section>
         <section id="view-library" class="view" aria-labelledby="library-title" hidden><div class="page-heading"><div><div class="eyebrow">TRACEABLE SOURCE LIBRARY</div><h1 id="library-title">资料数据库<span class="title-dot">.</span></h1><p>按内容去重，保留原始出处与已核读范围。</p></div><span class="pill pill-neutral">源文件只读</span></div><div id="library-stats" class="stats-row"></div><div class="collection-toolbar"><label class="search-box"><span aria-hidden="true">⌕</span><span class="sr-only">搜索资料</span><input id="library-search" type="search" placeholder="搜索标题、文件类型或来源…"></label><label class="filter-label"><span class="sr-only">核读状态</span><select id="library-status"><option value="">全部核读状态</option><option value="registered_partial_review">已有范围性核读</option><option value="unread">未核读</option><option value="excluded">已排除</option></select></label></div><div class="panel collection-panel"><div class="collection-heading"><h2>文件内容索引</h2><span id="library-count" class="muted"></span></div><div id="library-list"></div><div id="library-pagination" class="pagination"></div></div></section>

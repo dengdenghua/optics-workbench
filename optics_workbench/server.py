@@ -10,6 +10,7 @@ import sys
 from urllib.parse import urlsplit,parse_qs,unquote
 from .core import Workbench,dumps,loads
 from .calculations import TEMPLATES,FIELDS
+from . import ai
 
 MAX_BODY=2*1024*1024
 
@@ -22,7 +23,7 @@ class Server(ThreadingHTTPServer):
         super().__init__(('127.0.0.1',port),Handler)
 
 class Handler(BaseHTTPRequestHandler):
-    server_version='OpticsWorkbench/0.1'
+    server_version='OpticsWorkbench/0.2'
     def log_message(self,fmt,*args):
         # Avoid logging query terms, local paths, or user-provided document content.
         pass
@@ -67,11 +68,13 @@ class Handler(BaseHTTPRequestHandler):
             elif path.startswith('/api/knowledge/'):result=w.reference(path[len('/api/knowledge/'):])
             elif path=='/api/models':result=w.models(q('q'))
             elif path=='/api/projects':result=w.projects()
+            elif path=='/api/ai/status':result=ai.status(w)
             elif path.startswith('/api/projects/'):
                 rest=path[len('/api/projects/'):]
                 if rest.endswith('/export'):return self.send_data(200,w.export_project(rest[:-len('/export')]),attachment=True)
-                result=w.project(rest)
-            elif path in ('/','/index.html','/app.js','/styles.css'):
+                if rest.endswith('/scene'):result=w.scene(rest[:-len('/scene')])
+                else:result=w.project(rest)
+            elif path in ('/','/index.html','/app.js','/styles.css','/optical-view.js','/optical-view.css'):
                 filename='index.html' if path=='/' else path[1:]
                 target=self.server.web_dir/filename
                 if not target.is_file():return self.send_data(404,dict(error='前端资源未安装'))
@@ -96,8 +99,13 @@ class Handler(BaseHTTPRequestHandler):
             elif path=='/api/projects':result=w.save_project(data)
             elif path=='/api/calculate':result=w.calculate(data)
             elif path=='/api/projects/import':result=w.import_project(data)
+            elif path=='/api/scene/trace':result=w.preview_scene(data.get('scene'))
+            elif path=='/api/scene/save':result=w.save_scene(data.get('project_id'),data.get('version'),data.get('scene'))
+            elif path=='/api/design/apply':result=w.apply_design(data.get('project_id'),data.get('version'),scene=data.get('scene'),parameter_updates=data.get('parameter_updates'),note=data.get('note',''))
+            elif path=='/api/ai/chat':result=ai.chat(w,data.get('project_id'),data.get('version'),data.get('message'),history=data.get('history'))
             else:return self.send_data(404,dict(error='路径不存在'))
             self.send_data(200,result)
+        except ai.AIError as e:self.send_data(503,dict(error=str(e)))
         except (ValueError,TypeError,UnicodeError,OverflowError,ZeroDivisionError) as e:self.send_data(400,dict(error=str(e)))
         except Exception:self.send_data(500,dict(error='本地服务错误，操作未完成'))
 

@@ -1,5 +1,6 @@
 """SQLite store shared by the browser workbench and MCP. Sources are read only."""
 import csv
+import copy
 import hashlib
 import json
 import os
@@ -10,6 +11,7 @@ import threading
 from datetime import datetime,timezone
 import uuid
 from .calculations import calculate,template_parameters,TEMPLATES,FIELDS
+from .scene import default_scene,validate_scene,trace_scene
 
 def now():return datetime.now(timezone.utc).isoformat(timespec='seconds')
 def dumps(v):return json.dumps(v,ensure_ascii=False,allow_nan=False,separators=(',',':'))
@@ -201,6 +203,7 @@ class Workbench:
         notes=data.get('notes','')
         if not isinstance(notes,str) or len(notes)>20000:raise ValueError('备注过长或类型错误')
         result=self.calculate(data)
+        scene=validate_scene(data['scene']) if 'scene' in data else None
         selected=data.get('selected_components',{})
         if not isinstance(selected,dict) or set(selected)-{'collimators','flyeyes','prisms'}:raise ValueError('器件引用格式错误')
         if any(v is not None and (not isinstance(v,str) or len(v)>250) for v in selected.values()):raise ValueError('器件 ID 格式错误')
@@ -214,6 +217,11 @@ class Workbench:
                 if cid and not db.execute('SELECT 1 FROM components WHERE id=? AND kind=?',(cid,kind)).fetchone():raise ValueError('选中的器件不存在或类型不符，请重新选择：'+cid)
             stamp=now();version=row['version']+1 if row else 1
             project=dict(id=pid,name=name,template=str(data.get('template','dlp'))[:30],notes=notes,parameters=data['parameters'],selected_components=selected,version=version,created_at=row['created_at'] if row else stamp,updated_at=stamp,calculation=result)
+            # Older clients may omit scene. Never erase a saved layout that way.
+            if scene is not None:project['scene']=scene
+            elif row:
+                previous=loads(row['payload'])
+                if 'scene' in previous:project['scene']=previous['scene']
             encoded=dumps(project)
             db.execute('INSERT INTO projects VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,template=excluded.template,version=excluded.version,updated_at=excluded.updated_at,payload=excluded.payload',(pid,name,project['template'],version,project['created_at'],stamp,encoded))
             db.execute('INSERT INTO project_revisions VALUES(?,?,?,?)',(pid,version,stamp,encoded))
@@ -221,13 +229,16 @@ class Workbench:
 
     def export_project(self,project_id):
         p=self.project(project_id)
-        return dict(schema='optics-workbench.prototype',schema_version=1,exported_at=now(),project={k:p[k] for k in ('name','template','notes','parameters','selected_components')},calculation=p['calculation'],scope='参数迁移文件，不附原始资料文件或原生模型；名称、备注及器件引用可能包含私人信息，分享前请检查。')
+        fields={k:p[k] for k in ('name','template','notes','parameters','selected_components')}
+        if 'scene' in p:fields['scene']=p['scene']
+        return dict(schema='optics-workbench.prototype',schema_version=1,exported_at=now(),project=fields,calculation=p['calculation'],scope='参数迁移文件，不附原始资料文件或原生模型；名称、备注及器件引用可能包含私人信息，分享前请检查。')
 
     def import_project(self,payload):
         if not isinstance(payload,dict) or payload.get('schema')!='optics-workbench.prototype' or payload.get('schema_version')!=1:raise ValueError('不支持的原型文件格式或版本')
         raw=payload.get('project');self.calculate(raw)
         if not isinstance(raw.get('selected_components',{}),dict):raise ValueError('器件引用格式错误')
         p={k:raw.get(k) for k in ('name','template','notes','parameters')};p['selected_components']={}
+        if 'scene' in raw:p['scene']=validate_scene(raw['scene'])
         missing=[]
         with self.connect() as db:
             for kind,cid in raw.get('selected_components',{}).items():
@@ -235,4 +246,30 @@ class Workbench:
                 if cid and db.execute('SELECT 1 FROM components WHERE id=? AND kind=?',(cid,kind)).fetchone():p['selected_components'][kind]=cid
                 elif cid:missing.append(str(cid))
         if missing:p['notes']=(p.get('notes') or '')+'\n迁移提示：本机未找到以下器件引用，参数保留，需重新关联：'+', '.join(missing)
+        return self.save_project(p)
+
+    def scene(self,project_id):
+        p=self.project(project_id)
+        scene=validate_scene(p['scene']) if 'scene' in p else default_scene(p['parameters'])
+        return dict(project_id=p['id'],version=p['version'],scene=scene,trace=trace_scene(scene))
+
+    def preview_scene(self,scene):
+        return trace_scene(scene)
+
+    def save_scene(self,project_id,version,scene):
+        return self.apply_design(project_id,version,scene=scene)
+
+    def apply_design(self,project_id,version,scene=None,parameter_updates=None,note=''):
+        if isinstance(version,bool) or not isinstance(version,int) or version<1:
+            raise ValueError('请提供当前原型的整数版本')
+        if not isinstance(note,str) or len(note)>2000:raise ValueError('设计说明应为不超过2000字的文本')
+        if scene is None and parameter_updates is None:raise ValueError('没有提供光路或参数修改')
+        p=copy.deepcopy(self.project(project_id))
+        if p['version']!=version:raise ValueError('原型已由另一个窗口更新，请重新加载后再保存')
+        if scene is not None:p['scene']=validate_scene(scene)
+        if parameter_updates is not None:
+            if not isinstance(parameter_updates,dict) or set(parameter_updates)-set(p['parameters']):raise ValueError('参数修改包含未知字段')
+            p['parameters'].update(parameter_updates)
+        if note:p['notes']=(p.get('notes','')+'\n'+note).strip()
+        # save_project rechecks the version inside the SQLite write transaction.
         return self.save_project(p)

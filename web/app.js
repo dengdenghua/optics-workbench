@@ -97,6 +97,7 @@
     catch (error) { toast(error.message, true); }
     finally { state.busy = false; updateControls(); }
   }
+  let visual;
   function updateControls() {
     const noProject = !state.project;
     ["#save-button", "#clone-button", "#export-button", "#calculate-button", "#project-name", "#project-notes"].forEach(selector => { $(selector).disabled = noProject || state.busy; });
@@ -106,6 +107,7 @@
     const status = $("#save-status");
     status.textContent = noProject ? "尚未载入" : state.busy ? "处理中…" : state.dirty ? "● 有未保存修改" : `已保存 · v${state.project.version ?? 1}`;
     status.classList.toggle("is-dirty", state.dirty);
+    visual?.update();
   }
   function markEdited() {
     state.dirty = true;
@@ -234,6 +236,8 @@
     $("#workspace-content").hidden = false;
     $("#workspace-empty").hidden = true;
     renderChain(); renderFields(); renderResults(); updateControls();
+    $("#external-update").hidden = true;
+    visual?.load(project);
     try { localStorage.setItem("optics-workbench:last-project", project.id); } catch { /* Persistence is optional. */ }
   }
   function confirmDiscard() {
@@ -606,6 +610,16 @@
     await withBusy(async () => { state.stats = await api("/api/sync", {}); renderStats(); navigate(state.view); toast("本地资料索引已同步。"); });
   }
   function bindEvents() {
+    visual = new window.OpticalView($("#visual-workspace"), {
+      api, toast, busy: withBusy, adopt: adoptProject, state: () => state,
+      edit: scene => { if (state.project) { state.project.scene = scene; markEdited(); } },
+    });
+    $("#external-reload").onclick = () => { if (confirmDiscard()) loadProject(state.project.id); };
+    $("#external-copy").onclick = () => withBusy(async () => {
+      const draft = structuredClone(state.project);
+      const exported = {schema: "optics-workbench.prototype", schema_version: 1, project: {name: `${draft.name}（本地修改副本）`.slice(0,120), template: draft.template, parameters: draft.parameters, selected_components: draft.selected_components, notes: draft.notes, ...(draft.scene ? {scene: draft.scene} : {})}};
+      adoptProject(await api("/api/projects/import", exported)); toast("本地修改已另存为新原型。");
+    });
     [["#library-search", "搜索资料"], ["#component-search", "搜索器件"], ["#knowledge-search", "搜索设计知识"], ["#models-search", "搜索模型"]].forEach(([selector, name]) => $(selector).setAttribute("aria-label", name));
     $$(".nav-item").forEach(node => node.addEventListener("click", () => navigate(node.dataset.view)));
     $(".brand").addEventListener("click", event => { event.preventDefault(); navigate("workspace"); });
@@ -653,6 +667,18 @@
         await loadProject(id);
       } else { $("#workspace-empty").hidden = false; updateControls(); }
       navigate(location.hash.slice(1) || "workspace", false);
+      setInterval(async () => {
+        if (!state.project || state.busy || document.hidden) return;
+        const id = state.project.id, version = state.project.version;
+        try {
+          const current = await api(`/api/projects/${encodeURIComponent(id)}`);
+          if (state.busy || state.project?.id !== id || state.project.version !== version || current.version === version) return;
+          if (state.dirty) {
+            $("#external-update-text").textContent = `MCP 或另一窗口已保存 v${current.version}；你的修改仍保留在当前页面。`;
+            $("#external-update").hidden = false;
+          } else { adoptProject(current); toast(`已同步外部修改 · v${current.version}`); }
+        } catch { /* Existing offline banner and explicit requests handle errors. */ }
+      }, 2500);
     } catch (error) {
       $("#connection-status").textContent = "本地服务未连接";
       $("#connection-status").classList.add("offline");
