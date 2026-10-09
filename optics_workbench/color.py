@@ -7,6 +7,7 @@ import copy
 import hashlib
 import json
 import math
+from .design import validate_chain, resolve_chain
 
 GROUPS = ('R', 'G', 'B')
 P3 = ((.68, .32), (.265, .69), (.15, .06))
@@ -31,7 +32,7 @@ def xy(x, y):
 
 
 def validate(data):
-    keys(data, {'schema_version','sources','target_x','target_y','available_angle_deg','timing','allocation','angles_deg','receiving_plane','downstream_efficiency','screen_area_m2','screen_gain','provenance'}, '配色预算')
+    keys(data, {'schema_version','sources','target_x','target_y','available_angle_deg','timing','allocation','angles_deg','receiving_plane','downstream_efficiency','screen_area_m2','screen_gain','provenance','downstream_chain'}, '配色预算')
     if data.get('schema_version') != 1 or isinstance(data.get('schema_version'), bool): raise ValueError('配色预算版本应为1')
     d=copy.deepcopy(data); xy(d.get('target_x'),d.get('target_y'))
     if d.get('timing') not in ('sequential','simultaneous'): raise ValueError('请声明时序或同时点亮')
@@ -44,11 +45,17 @@ def validate(data):
         raise ValueError('RGB有效角度总和超过已扣消隐的可用角度')
     if not isinstance(d.get('receiving_plane'),str) or not 1<=len(d['receiving_plane'])<=200:raise ValueError('请声明输入光通量所在接收面')
     number(d.get('downstream_efficiency'),'接收面到屏幕效率',hi=1)
+    if 'downstream_chain' in d:
+        validate_chain(d['downstream_chain'], d['receiving_plane'])
+        if d['downstream_efficiency'] != 1: raise ValueError('启用分段链时总效率占位必须为1，防止重复乘损失')
     number(d.get('screen_area_m2'),'屏幕面积m²',hi=1e6,positive=True)
     number(d.get('screen_gain'),'方向性屏幕增益',hi=100,positive=True)
     provenance=d.get('provenance',{})
-    keys(provenance,{'case_id','source_id','sheet','scope'},'来源')
+    keys(provenance,{'case_id','source_id','sheet','scope','source_sha256','reference_slug','baseline_hash'},'来源')
     if any(not isinstance(v,str) or len(v)>2000 for v in provenance.values()):raise ValueError('来源说明过长或类型错误')
+    for key in ('source_sha256','baseline_hash'):
+        if key in provenance and (len(provenance[key]) != 64 or any(c not in '0123456789abcdef' for c in provenance[key])):
+            raise ValueError('来源文件或基线指纹应为SHA-256')
     d['provenance']=provenance
     if not isinstance(d.get('sources'),list) or not 3<=len(d['sources'])<=24:raise ValueError('提供3–24个光源，分组到RGB')
     names=set()
@@ -136,8 +143,14 @@ def intersection(subject, clip):
     return poly
 
 
-def calculate(data):
+def fingerprint(data):
+    d=copy.deepcopy(data);d.pop('provenance',None)
+    return hashlib.sha256(json.dumps(d,sort_keys=True,ensure_ascii=False,allow_nan=False).encode()).hexdigest()
+
+
+def calculate(data, parameters=None):
     d=validate(data);rows=[];warnings=[];grouped=[]
+    chain=resolve_chain(d,parameters)
     for s in d['sources']:
         multiplier=s['quantity']*s['current_factor']*s['thermal_factor'] if s['enabled'] else 0.
         emitted=s['input_value']*multiplier
@@ -153,7 +166,10 @@ def calculate(data):
         values=[r['XYZ'] for r in rows if r['group']==g];m=mixed(values)
         if m['lumens']<=0:raise ValueError(g+'组接收面光通量必须大于0，无法建立三基色白点预算')
         grouped.append(dict(group=g,**m))
-    matrix=[[p['x']/p['y'] for p in grouped],[1.,1.,1.],[(1-p['x']-p['y'])/p['y'] for p in grouped]]
+    effective=[dict(p,lumens=p['lumens']*(chain['efficiencies'][p['group']] if chain['mode']=='chain' else 1.)) for p in grouped]
+    if d['allocation']=='solve' and any(p['lumens']<=0 for p in effective):
+        raise ValueError('逐色后段损失使RGB组输出为零，不能求解屏幕白点')
+    matrix=[[p['x']/p['y'] for p in effective],[1.,1.,1.],[(1-p['x']-p['y'])/p['y'] for p in effective]]
     rhs=[d['target_x']/d['target_y'],1.,(1-d['target_x']-d['target_y'])/d['target_y']]
     fractions=solve(matrix,rhs)
     feasible=min(fractions)>=-1e-10
@@ -163,38 +179,42 @@ def calculate(data):
     if feasible:fractions=[max(0.,f)/sum(max(0.,v) for v in fractions) for f in fractions]
     if d['allocation']=='solve':
         if d['timing']=='sequential':
-            white=d['available_angle_deg']/math.fsum(f/(p['lumens']/360) for f,p in zip(fractions,grouped))
-        else:white=min(p['lumens']/f for p,f in zip(grouped,fractions) if f>1e-12)
-        weights={p['group']:white*f/p['lumens'] for p,f in zip(grouped,fractions)}
+            white=d['available_angle_deg']/math.fsum(f/(p['lumens']/360) for f,p in zip(fractions,effective))
+        else:white=min(p['lumens']/f for p,f in zip(effective,fractions) if f>1e-12)
+        weights={p['group']:white*f/p['lumens'] for p,f in zip(effective,fractions)}
     else:weights={g:d['angles_deg'][g]/360 for g in GROUPS}
     for r,s in zip(rows,d['sources']):
         duty=weights[r['group']] if s['time_basis']=='CW' else 1.
         r['weight']=duty;r['average_lumens']=r['input_lumens']*duty
-        r['screen_lumens']=r['average_lumens']*d['downstream_efficiency']
+        r['screen_lumens']=r['average_lumens']*chain['efficiencies'][r['group']]
         r['average_electrical_w']=r['electrical_w']*duty if r['electrical_w'] is not None else None
         r['source_heat_w']=(r['electrical_w']-r['optical_w'])*duty if r['power_valid'] and r['electrical_w'] is not None and r['optical_w'] is not None else None
     output=mixed([xyz(s['x'],s['y'],r['average_lumens']) for s,r in zip(d['sources'],rows)])
+    screen_output=mixed([xyz(s['x'],s['y'],r['screen_lumens']) for s,r in zip(d['sources'],rows)])
     cw=mixed([r['XYZ'] for r in rows])
     rgb=[dict(group=g,weight=weights[g],angle_deg=weights[g]*360,average_lumens=sum(r['average_lumens'] for r in rows if r['group']==g),target_Y_fraction=f) for g,f in zip(GROUPS,fractions)]
     complete_power=all(r['average_electrical_w'] is not None and r['power_valid'] for r in rows)
     electrical=sum(r['average_electrical_w'] for r in rows) if complete_power else None
     if electrical is None:warnings.append('电功率/工况未完整或不一致，不输出可信光源lm/电学W；屏幕光通量仍是指定条件预算。')
     heat=sum(r['source_heat_w'] for r in rows if r['enabled']) if all(r['source_heat_w'] is not None for r in rows if r['enabled']) else None
-    flux=output['lumens']*d['downstream_efficiency'];tri=[(p['x'],p['y']) for p in grouped];gamut={}
+    flux=screen_output['lumens'];tri=[(p['x'],p['y']) for p in grouped];gamut={}
     for name,ref in [('DCI-P3',P3),('BT.709',REC709)]:
         gamut[name]={}
         for coords,transform in [('xy',lambda p:p),('uv_prime',uv)]:
             a=[transform(p) for p in tri];b=[transform(p) for p in ref];ref_area=area(b)
             gamut[name][coords]=dict(area_ratio=area(a)/ref_area,intersection_coverage=min(1.,area(intersection(a,b))/ref_area),reference=[list(p) for p in b])
-    delta_uv=math.dist(uv((output['x'],output['y'])),uv((d['target_x'],d['target_y']))) if output['lumens'] else None
-    return dict(kind='color_brightness_budget',calculator_version='1.0',input_hash=hashlib.sha256(json.dumps(d,sort_keys=True,ensure_ascii=False,allow_nan=False).encode()).hexdigest(),
-                input_total=cw,grouped=grouped,sources=rows,rgb=rgb,output=output,screen_lumens=flux,
+    delta_uv=math.dist(uv((screen_output['x'],screen_output['y'])),uv((d['target_x'],d['target_y']))) if flux else None
+    for stage in chain['stages']:
+        stage['rgb_lumens']={g:sum(r['average_lumens'] for r in rows if r['group']==g)*stage['cumulative_efficiencies'][g] for g in GROUPS}
+        stage['lumens']=sum(stage['rgb_lumens'].values())
+    return dict(kind='color_brightness_budget',calculator_version='1.1',input_hash=hashlib.sha256(json.dumps(dict(budget=d,resolved_chain=chain),sort_keys=True,ensure_ascii=False,allow_nan=False).encode()).hexdigest(),
+                input_total=cw,grouped=grouped,sources=rows,rgb=rgb,output=output,screen_output=screen_output,screen_lumens=flux,downstream=chain,
                 mean_illuminance_lx=flux/d['screen_area_m2'],estimated_luminance_cd_m2=flux*d['screen_gain']/(math.pi*d['screen_area_m2']),
                 average_electrical_w=electrical,screen_lm_per_electrical_w=flux/electrical if electrical else None,source_heat_w=heat,
                 target_feasible=feasible,target_delta_uv_prime=delta_uv,gamut=gamut,warnings=warnings,
                 assumptions=['同RGB组的光源共用时序/调光；先做XYZ相加，禁止lm加权直接平均xy。',
                              '前段效率必须与输入lm/W的接收面相匹配；温降/电流倍率是用户工况假设，不作器件通用规律。',
-                             '后段效率为RGB共用、不改变谱形的指定标量；有选择性损失须逐色/逐谱重新求白点。',
+                             '分段链为逐色光学损失，目标白点在屏幕求解；各RGB组内假设不改变谱形。光谱选择性损失仍需逐谱模型。',
                              '面积比与三角形交集覆盖分别在xy、u′v′中计算；都不是色容积或色准。',
                              '屏幕lm为预测光通量，无ANSI/CVIA固定换算；lx与cd/m²按面积和给定方向性增益估算，非实测。',
                              '热预算仅在同工况电功率与源发出的光功率齐全时给出源级差值，不把光路损失全当吸热。'])

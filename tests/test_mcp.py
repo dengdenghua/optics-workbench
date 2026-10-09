@@ -199,10 +199,13 @@ class ProtocolTests(unittest.TestCase):
 
     def test_all_adapters_route_to_contract_methods(self):
         cases = [
+            ('optics_search_evidence', {'query':'white','limit':2}, 'search_evidence', (), {'query':'white','limit':2}),
+            ('optics_preview_design', {'project_id':'p1','version':2,'parameter_updates':{'source_lumens':800}}, 'preview_design', (), {'project_id':'p1','version':2,'parameter_updates':{'source_lumens':800}}),
+            ('optics_create_chain_template', {'parameters':{},'receiving_plane':'input','start_stage':'lens'}, 'chain_template', (), {'parameters':{},'receiving_plane':'input','start_stage':'lens'}),
             ("optics_list_color_cases", {}, "color_cases", (), {}),
             ("optics_get_color_case", {"case_id":"demo"}, "color_case", ("demo",), {}),
             ("optics_get_color_budget", {"project_id":"p1"}, "color_budget", ("p1",), {}),
-            ("optics_calculate_color_budget", {"budget":{}}, "calculate_color", ({},), {}),
+            ("optics_calculate_color_budget", {"budget":{}}, "calculate_color", ({},None), {}),
             ("optics_save_color_budget", {"project_id":"p1","version":2,"budget":{}}, "save_color", ("p1",2,{}), {}),
             ("optics_stats", {}, "stats", (), {}),
             ("optics_sync_knowledge", {}, "sync", (), {}),

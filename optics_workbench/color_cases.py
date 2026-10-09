@@ -2,7 +2,7 @@
 import copy
 import json
 from pathlib import Path
-from .color import calculate, default_budget, source, GROUPS
+from .color import calculate, default_budget, source, GROUPS, fingerprint
 
 
 def _read(base, filename):
@@ -13,6 +13,11 @@ def _read(base, filename):
 
 
 def _comparison(case):
+    provenance=case['budget']['provenance']
+    provenance['case_id']=case['id']
+    for key in ('source_sha256','reference_slug'):
+        if case.get(key):provenance[key]=case[key]
+    provenance['baseline_hash']=fingerprint(case['budget'])
     result=calculate(case['budget'])
     manual=copy.deepcopy(case['budget']);manual['allocation']='manual';manual['angles_deg']=case['original']['angles_deg']
     fixed=calculate(manual)

@@ -23,7 +23,7 @@ class Server(ThreadingHTTPServer):
         super().__init__(('127.0.0.1',port),Handler)
 
 class Handler(BaseHTTPRequestHandler):
-    server_version='OpticsWorkbench/0.3'
+    server_version='OpticsWorkbench/0.4'
     def log_message(self,fmt,*args):
         # Avoid logging query terms, local paths, or user-provided document content.
         pass
@@ -50,6 +50,15 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get('Sec-Fetch-Site')=='cross-site':
             self.send_data(403,dict(error='拒绝跨站请求'));return False
         if mutation and not hmac.compare_digest(self.headers.get('X-Workbench-Token',''),self.server.token):
+            # Drain a small, bounded rejected JSON body before closing. On
+            # Windows an unread POST body can otherwise reset the connection
+            # before the browser receives the definite token rejection.
+            try:
+                length=int(self.headers.get('Content-Length','0'))
+                if 0<length<=MAX_BODY:
+                    self.connection.settimeout(3)
+                    self.rfile.read(length)
+            except (ValueError,OSError):pass
             self.send_data(403,dict(error='会话已失效，请刷新页面'));return False
         return True
 
@@ -59,12 +68,13 @@ class Handler(BaseHTTPRequestHandler):
             u=urlsplit(self.path);path=unquote(u.path);args=parse_qs(u.query)
             q=lambda name,default='':args.get(name,[default])[0]
             w=self.server.workbench
-            if path=='/api/bootstrap':result=dict(stats=w.stats(),templates=TEMPLATES,fields=FIELDS,projects=w.projects(),csrf_token=self.server.token)
+            if path=='/api/bootstrap':result=dict(app_version='0.4.0',stats=w.stats(),templates=TEMPLATES,fields=FIELDS,projects=w.projects(),csrf_token=self.server.token)
             elif path=='/api/stats':result=w.stats()
             elif path=='/api/library':result=w.library(q('q'),q('status'),q('page',1))
             elif path.startswith('/api/library/'):result=w.document(path[len('/api/library/'):])
             elif path=='/api/components':result=w.components(q('kind'),q('q'))
             elif path=='/api/knowledge':result=w.knowledge(q('q'))
+            elif path=='/api/evidence':result=w.search_evidence(q('q'),int(q('limit',8)))
             elif path.startswith('/api/knowledge/'):result=w.reference(path[len('/api/knowledge/'):])
             elif path=='/api/models':result=w.models(q('q'))
             elif path=='/api/projects':result=w.projects()
@@ -105,9 +115,12 @@ class Handler(BaseHTTPRequestHandler):
             elif path=='/api/scene/trace':result=w.preview_scene(data.get('scene'))
             elif path=='/api/scene/save':result=w.save_scene(data.get('project_id'),data.get('version'),data.get('scene'))
             elif path=='/api/design/apply':result=w.apply_design(data.get('project_id'),data.get('version'),scene=data.get('scene'),parameter_updates=data.get('parameter_updates'),note=data.get('note',''),color_budget=data.get('color_budget'))
-            elif path=='/api/color/calculate':result=w.calculate_color(data.get('budget'))
+            elif path=='/api/design/preview':result=w.preview_design(data.get('project_id'),data.get('version'),scene=data.get('scene'),parameter_updates=data.get('parameter_updates'),note=data.get('note',''),color_budget=data.get('color_budget'))
+            elif path=='/api/design/chain-template':result=w.chain_template(data.get('parameters'),data.get('receiving_plane'),data.get('start_stage'))
+            elif path=='/api/color/calculate':result=w.calculate_color(data.get('budget'),data.get('parameters'))
             elif path=='/api/color/save':result=w.save_color(data.get('project_id'),data.get('version'),data.get('budget'))
-            elif path=='/api/ai/chat':result=ai.chat(w,data.get('project_id'),data.get('version'),data.get('message'),history=data.get('history'))
+            elif path=='/api/ai/chat':result=ai.chat(w,data.get('project_id'),data.get('version'),data.get('message'),history=data.get('history'),preview=data.get('preview',False),evidence_ids=data.get('evidence_ids'))
+            elif path=='/api/ai/apply':result=ai.apply_proposal(w,data.get('project_id'),data.get('version'),data.get('proposal_id'))
             else:return self.send_data(404,dict(error='路径不存在'))
             self.send_data(200,result)
         except ai.AIError as e:self.send_data(503,dict(error=str(e)))

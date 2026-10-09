@@ -1,5 +1,7 @@
 # AI visual workbench implementation contract
 
+v0.4: [Design workflow](docs/design-workflow.md) adds explicit linked optical losses, provenance comparisons, bounded selected evidence, and a no-write preview/apply flow. The browser uses `preview:true`; the legacy AI route retains its omitted/false auto-commit behavior.
+
 This addition uses the existing shared project store. Original files remain read-only. The new scene is a first-order, unfolded-axis optical prototype; lens shapes are symbols, not manufactured prescriptions. No external optical applications start automatically.
 
 ## Scene and trace

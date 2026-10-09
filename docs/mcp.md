@@ -57,7 +57,7 @@ Results contain `content` with serialized JSON. Successful modern and 2025 respo
 
 ## Scene editing from Codex or another MCP host
 
-The current catalog has 24 tools. Start by reading `optics_get_prototype` and `optics_get_scene` for the same project ID. `optics_get_scene` returns `{project_id, version, scene, trace}`; older projects get an unsaved default scene. The web UI reads the same project store when both processes use the same local configuration.
+The current catalog has 27 tools. Start by reading `optics_get_prototype` and `optics_get_scene` for the same project ID. `optics_get_scene` returns `{project_id, version, scene, trace}`; older projects get an unsaved default scene. The web UI reads the same project store when both processes use the same local configuration.
 
 | Tool arguments | Result and persistence |
 | --- | --- |
@@ -120,3 +120,7 @@ Private record text and source locations returned by read tools can be sent to t
 Read `optics_list_color_cases` and `optics_get_color_case(case_id)` for local reviewed evidence, cache/recalculation comparisons and source scope. Public-only installations offer a synthetic case. For a project read `optics_get_color_budget(project_id)`; its `saved` flag distinguishes an unsaved default. Edit a copy of `budget`, preview with `optics_calculate_color_budget(budget)`, then save with `optics_save_color_budget(project_id, version, budget)` or the optional `color_budget` argument of `optics_apply_design`. The complete budget and recomputed result are versioned together. Scene and scalar inputs are preserved.
 
 Unknown fields, nonfinite inputs, impossible automatic white points and stale versions fail without partial saves. An average source input cannot be reverse-solved as CW timing. Keep source/receiving-plane units explicit. Neither gamut area nor ray-count ratios are optical efficiency; predicted screen lumens are not measured ANSI/CVIA. See [formulas](color-brightness.md). Export includes saved color inputs but not workbook evidence. Personal values may be present in those inputs; inspect before sharing.
+
+## v0.4 linked design workflow
+
+Read the current prototype and color budget before editing. `optics_search_evidence` returns bounded source snippets and review scope; `optics_create_chain_template` produces an unsaved optical-only chain starting after the specified input plane; `optics_preview_design` validates a proposed scene/parameter/color change and returns field differences without writing. `optics_calculate_color_budget` accepts optional `parameters`; linked chains require the current full parameter object and never reuse saved efficiency snapshots. Apply with the current version using `optics_apply_design`. See [the exact schema and boundaries](design-workflow.md).

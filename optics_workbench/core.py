@@ -12,8 +12,9 @@ from datetime import datetime,timezone
 import uuid
 from .calculations import calculate,template_parameters,TEMPLATES,FIELDS
 from .scene import default_scene,validate_scene,trace_scene
-from .color import validate as validate_color, calculate as calculate_color, default_budget
+from .color import validate as validate_color, calculate as calculate_color, default_budget, fingerprint
 from .color_cases import all_cases
+from .design import differences, chain_template
 
 def now():return datetime.now(timezone.utc).isoformat(timespec='seconds')
 def dumps(v):return json.dumps(v,ensure_ascii=False,allow_nan=False,separators=(',',':'))
@@ -207,7 +208,7 @@ class Workbench:
         result=self.calculate(data)
         scene=validate_scene(data['scene']) if 'scene' in data else None
         color=validate_color(data['color_budget']) if 'color_budget' in data else None
-        color_result=calculate_color(color) if color is not None else None
+        color_result=self.calculate_color(color,data['parameters']) if color is not None else None
         selected=data.get('selected_components',{})
         if not isinstance(selected,dict) or set(selected)-{'collimators','flyeyes','prisms'}:raise ValueError('器件引用格式错误')
         if any(v is not None and (not isinstance(v,str) or len(v)>250) for v in selected.values()):raise ValueError('器件 ID 格式错误')
@@ -231,7 +232,7 @@ class Workbench:
             elif row:
                 previous=loads(row['payload'])
                 if 'color_budget' in previous:
-                    project['color_budget']=previous['color_budget'];project['color_calculation']=calculate_color(previous['color_budget'])
+                    project['color_budget']=previous['color_budget'];project['color_calculation']=self.calculate_color(previous['color_budget'],data['parameters'])
             encoded=dumps(project)
             db.execute('INSERT INTO projects VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,template=excluded.template,version=excluded.version,updated_at=excluded.updated_at,payload=excluded.payload',(pid,name,project['template'],version,project['created_at'],stamp,encoded))
             db.execute('INSERT INTO project_revisions VALUES(?,?,?,?)',(pid,version,stamp,encoded))
@@ -283,9 +284,94 @@ class Workbench:
 
     def color_budget(self,project_id):
         p=self.project(project_id);b=p.get('color_budget') or default_budget()
-        return dict(project_id=p['id'],version=p['version'],budget=b,calculation=calculate_color(b),saved='color_budget' in p)
+        return dict(project_id=p['id'],version=p['version'],budget=b,calculation=self.calculate_color(b,p['parameters']),saved='color_budget' in p)
 
-    def calculate_color(self,budget):return calculate_color(budget)
+    def calculate_color(self,budget,parameters=None):
+        result=calculate_color(budget,parameters)
+        provenance=budget.get('provenance',{})
+        context=dict(source_id=provenance.get('source_id',''),case_id=provenance.get('case_id',''),
+                     scope=provenance.get('scope',''),status='unverified',changes=dict(items=[],total=0,truncated=False))
+        if provenance.get('source_id')=='synthetic_demo':context['status']='synthetic'
+        if provenance.get('case_id'):
+            try:
+                case=self.color_case(provenance['case_id'])
+                before=copy.deepcopy(case['budget']);after=copy.deepcopy(budget)
+                before.pop('provenance',None);after.pop('provenance',None)
+                context.update(title=case['title'],source_sha256=case.get('source_sha256',''),reference_slug=case.get('reference_slug',''),
+                               changes=differences(before,after,60),status='case_unchanged' if before==after else 'case_modified')
+                if provenance.get('source_sha256') and provenance['source_sha256'] != case.get('source_sha256'):
+                    context['status']='source_changed'
+            except ValueError:context['status']='case_unavailable'
+        elif provenance.get('baseline_hash'):
+            context['status']='baseline_unchanged' if fingerprint(budget)==provenance['baseline_hash'] else 'baseline_modified'
+        result['source_context']=context
+        return result
+
+    def chain_template(self,parameters,receiving_plane,start_stage):
+        return chain_template(parameters,receiving_plane,start_stage)
+
+    def preview_design(self,project_id,version,scene=None,parameter_updates=None,color_budget=None,note=''):
+        if type(version) is not int or version<1:raise ValueError('请提供当前原型的整数版本')
+        original=self.project(project_id)
+        if original['version']!=version:raise ValueError('原型已更新，请重新载入后预览')
+        if not isinstance(note,str) or len(note)>2000:raise ValueError('设计说明过长或类型错误')
+        p=copy.deepcopy(original)
+        if scene is not None:p['scene']=validate_scene(scene)
+        if parameter_updates is not None:
+            if not isinstance(parameter_updates,dict) or set(parameter_updates)-set(p['parameters']):raise ValueError('参数修改包含未知字段')
+            p['parameters'].update(parameter_updates)
+        if color_budget is not None:p['color_budget']=validate_color(color_budget)
+        if note:p['notes']=(p.get('notes','')+'\n'+note).strip()
+        if len(p.get('notes',''))>20000:raise ValueError('备注过长')
+        p['calculation']=self.calculate(p)
+        if 'color_budget' in p:p['color_calculation']=self.calculate_color(p['color_budget'],p['parameters'])
+        paths=('parameters','scene','color_budget','notes')
+        diff=differences({k:original.get(k) for k in paths},{k:p.get(k) for k in paths})
+        return dict(project_id=project_id,version=version,draft=p,differences=diff,
+                    trace=trace_scene(p.get('scene') or default_scene(p['parameters'])),scope='只预览；未保存、未运行原生光学仿真')
+
+    def search_evidence(self,query='',limit=8):
+        """Bounded local snippets; original source files are never opened."""
+        if type(limit) is not int or not 1<=limit<=20:raise ValueError('证据检索数量应为1–20')
+        where,args=self._search(query,['title','body'])
+        with self.connect() as db:notes=db.execute('SELECT * FROM knowledge WHERE '+where+' ORDER BY title LIMIT ?',args+[limit]).fetchall()
+        items=[];terms=query.lower().split()
+        for row in notes:
+            lines=row['body'].splitlines()
+            start=next((i for i,line in enumerate(lines) if any(t in line.lower() for t in terms)),0)
+            end=min(len(lines),start+10);excerpt='\n'.join(lines[start:end])[:1800]
+            ident='reference:'+row['slug']+'#L'+str(start+1)+'-'+str(end)+':'+hashlib.sha256(excerpt.encode()).hexdigest()[:16]
+            items.append(dict(id=ident,title=row['title'],kind='reference',location=row['slug']+':'+str(start+1),
+                              excerpt=excerpt,source_ids=sorted(set(re.findall(r'\bS\d{2,3}\b',excerpt))),scope='已蒸馏条目的选定行；不是全部源文档核读',line_start=start+1,line_end=end))
+        for case in self.color_cases():
+            hay=' '.join(str(case.get(k,'') or '') for k in ('title','source_id','sheet','scope')).lower()
+            if all(t in hay for t in terms) and len(items)<limit:
+                ident='case:'+case['id']+':'+hashlib.sha256(dumps(case).encode()).hexdigest()[:16]
+                items.append(dict(id=ident,title=case['title'],kind='case',location=case['source_id']+' / '+(case.get('sheet') or '合成演示'),
+                                  excerpt=case['scope'],source_ids=[case['source_id']],scope=case['scope']))
+        return dict(items=items,query=query,scope='本机资料检索；仅索引及蒸馏证据，不读取原始工作文件')
+
+    def selected_evidence(self,identifiers):
+        if not isinstance(identifiers,list) or len(identifiers)>8 or any(not isinstance(i,str) for i in identifiers) or len(set(identifiers))!=len(identifiers):raise ValueError('最多选择8项不同证据')
+        items=[]
+        for ident in identifiers:
+            if not isinstance(ident,str) or len(ident)>300:raise ValueError('证据编号错误')
+            if ident.startswith('reference:'):
+                match=re.fullmatch(r'reference:(.+)#L(\d+)-(\d+):([a-f0-9]{16})',ident)
+                if not match:raise ValueError('证据片段编号错误')
+                slug,first,last,digest=match.groups();first=int(first);last=int(last)
+                if not 1<=first<=last or last-first>=10:raise ValueError('证据片段范围错误')
+                ref=self.reference(slug);excerpt='\n'.join(ref['body'].splitlines()[first-1:last])[:1800]
+                if hashlib.sha256(excerpt.encode()).hexdigest()[:16]!=digest:raise ValueError('所选证据已更新，请重新检索并选择')
+                items.append(dict(id=ident,title=ref['title'],location=ref['slug']+':'+str(first),excerpt=excerpt,scope='用户选择的条目片段'))
+            elif ident.startswith('case:'):
+                match=re.fullmatch(r'case:([^:]+):([a-f0-9]{16})',ident)
+                if not match:raise ValueError('案例证据编号错误')
+                case=self.color_case(match[1]);summary=next(c for c in self.color_cases() if c['id']==match[1])
+                if hashlib.sha256(dumps(summary).encode()).hexdigest()[:16]!=match[2]:raise ValueError('所选案例已更新，请重新选择')
+                items.append(dict(id=ident,title=case['title'],location=case['source_id']+' / '+case.get('sheet',''),excerpt=case['scope'],scope=case['scope']))
+            else:raise ValueError('未知证据编号')
+        return items
 
     def save_color(self,project_id,version,budget):
         return self.apply_design(project_id,version,color_budget=budget)

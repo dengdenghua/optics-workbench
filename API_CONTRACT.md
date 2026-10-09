@@ -1,5 +1,7 @@
 # Implementation contract
 
+v0.4 additions and exact chain/evidence/preview interfaces are documented in [Design workflow](docs/design-workflow.md). Browser chat sends `preview:true`; the legacy omitted/false mode retains its validated atomic auto-commit contract.
+
 Portable local optical parameter workbench. Public source code and synthetic demos; private knowledge/data/config are separate and ignored by Git. SQLite and Python standard library server, static browser UI, stdio MCP using the same core. No optical application operation or source-file mutation.
 
 ## Python core

@@ -39,4 +39,8 @@ Call `optics_sync_knowledge` only to refresh sources already configured by the l
 
 先用 optics_list_color_cases / optics_get_color_case 检查本机案例的来源、核读范围、缓存对照及单元格审计，再用 optics_get_color_budget 读取目标原型、当前版本及 saved 标志。合成默认不代表已保存。光源坐标与通量先转XYZ相加，同RGB组共用时序；区分输出光学W、泵浦W、电学W以及CW与全周期平均量。不要直接平均xy、重复乘占空比、裁去负通道后声称达到白点、用面积比声称色域覆盖，或用固定倍率声称ANSI/CVIA实测。
 
-编辑完整预算副本，用 optics_calculate_color_budget 复核，再以当前版本调用 optics_save_color_budget；组合编辑可用 optics_apply_design 的 color_budget。保存保留光路和标量预算，三模块的效率不会自动联乘。迁移包含配色输入，检查私人参数和来源定位后再公开。个人证据和原始表格不随公开插件分发。
+编辑完整预算副本，用 optics_calculate_color_budget 复核，再以当前版本调用 optics_save_color_budget；组合编辑可用 optics_apply_design 的 color_budget。默认三模块分别计算。需要联动时，确认预算输入面和下游起点，用 optics_create_chain_template 生成未保存链。链只含光学损失，启用时 downstream_efficiency 必须为1；关联链计算必须传入当前完整 parameters，不能用保存的效率快照。逐色损失参与屏幕白点求解，时序只乘一次；组内谱形变化需更细模型。
+
+用 optics_search_evidence 获取有限资料片段、位置和核读范围；本地来源对照只能证明与已核读基线的关系，不能证明原文件未变化或数据已实测。案例对照不会自动应用到原型。写入前可用 optics_preview_design 在当前版本校验场景、参数、配色预算并查看字段差异，预览不保存。版本变化时重新读取和协调，按用户已授权的范围使用 optics_apply_design 一次保存。
+
+迁移包含配色输入、分段链和自填来源，检查私人参数和定位后再公开。个人证据和原始表格不随公开插件分发。内置网页聊天只传明确选择的证据片段，草案需点击应用；Codex MCP 工具结果进入当前客户端模型上下文，遵循该客户端的数据范围。

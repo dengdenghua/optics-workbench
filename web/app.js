@@ -86,6 +86,12 @@
     let data;
     try { data = await response.json(); }
     catch { throw new Error(`服务返回了无法读取的响应（HTTP ${response.status}）。`); }
+    // A token rejection occurs before the handler can execute the POST. Retry
+    // only that definite rejection, never a timeout or ambiguous write failure.
+    if(body!==undefined&&response.status===403&&data.error==='会话已失效，请刷新页面'){
+      const fresh=await fetch('/api/bootstrap',{headers:{Accept:'application/json'},credentials:'same-origin'});
+      if(fresh.ok){const boot=await fresh.json();state.token=boot.csrf_token;options.headers['X-Workbench-Token']=state.token;response=await fetch(path,options);data=await response.json();}
+    }
     if (!response.ok) throw new Error(data.error || `请求失败（HTTP ${response.status}）。`);
     return data;
   }
@@ -114,6 +120,7 @@
     state.dirty = true;
     state.fresh = false;
     state.revision += 1;
+    try { if(state.project)localStorage.setItem('optics-workbench:draft:'+state.project.id,JSON.stringify(state.project)); } catch { /* Saving to the database remains explicit. */ }
     updateControls();
     updateResultState();
   }
@@ -194,6 +201,7 @@
         const value = field.type === "select" ? (input.value || null) : input.value === "" ? null : Number(input.value);
         state.project.parameters[field.key] = value;
         markEdited();
+        color?.parametersChanged();
       });
       inputWrap.prepend(input);
       wrap.append(label, inputWrap);
@@ -247,7 +255,7 @@
   }
   async function loadProject(id) {
     if (!id) return;
-    await withBusy(async () => adoptProject(await api(`/api/projects/${encodeURIComponent(id)}`)));
+    await withBusy(async () => {adoptProject(await api(`/api/projects/${encodeURIComponent(id)}`));offerDraftRecovery(id);});
     updateProjectOptions();
   }
   function validateInputs() {
@@ -279,8 +287,9 @@
   }
   async function saveProject() {
     if (!state.project || !validateInputs()) return;
-    await withBusy(async () => { adoptProject(await api("/api/projects", state.project)); toast("原型与计算预算已保存到本地数据库。"); });
+    await withBusy(async () => { const saved=await api("/api/projects", state.project);try{localStorage.removeItem('optics-workbench:draft:'+saved.id);}catch{}adoptProject(saved);$("#draft-recovery").hidden=true;toast("原型与计算预算已保存到本地数据库。"); });
   }
+  function offerDraftRecovery(id){const box=$('#draft-recovery');box.hidden=true;try{const raw=localStorage.getItem('optics-workbench:draft:'+id);if(!raw)return;const draft=JSON.parse(raw);if(draft.id!==id||!draft.parameters)return;const currentVersion=state.project.version;box.replaceChildren(el('span','',`找到本地未保存草稿（基于 v${draft.version}；当前 v${currentVersion}）。`),button('恢复草稿','button button-secondary button-small',()=>{adoptProject(draft);markEdited();box.hidden=true;if(draft.version!==currentVersion)toast('草稿基于旧版本；请另存副本或与最新版本核对。',true);}),button('丢弃此草稿','button button-quiet button-small',()=>{localStorage.removeItem('optics-workbench:draft:'+id);box.hidden=true;}));box.hidden=false;}catch{box.textContent='本地草稿无法读取；当前数据库原型仍保留。';box.hidden=false;}}
   function updateResultState() {
     const hasResult = Boolean(state.project?.calculation);
     const node = $("#result-status");
@@ -432,6 +441,7 @@
   function navigate(view, updateHash = true) {
     if (!Object.prototype.hasOwnProperty.call(viewTitles, view)) view = "workspace";
     state.view = view;
+    if(visual?.chat){if(view==='color')$('#view-color').append(visual.chat);else if(view==='workspace')$('#visual-workspace').append(visual.chat);}
     $$(".view").forEach(node => { node.hidden = node.id !== `view-${view}`; });
     $$(".nav-item").forEach(node => { const active = node.dataset.view === view; node.classList.toggle("active", active); if (active) node.setAttribute("aria-current", "page"); else node.removeAttribute("aria-current"); });
     $("#breadcrumb-current").textContent = viewTitles[view];
@@ -666,7 +676,7 @@
       state.projects = bootstrap.projects || [];
       state.stats = bootstrap.stats || {};
       state.loaded = true;
-      $("#connection-status").textContent = "本地服务已连接";
+      $("#connection-status").textContent = "本地服务已连接"+(bootstrap.app_version?' · v'+bootstrap.app_version:'');
       updateProjectOptions();
       if (state.projects.length) {
         let preferred;
