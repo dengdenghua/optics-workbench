@@ -1,0 +1,22 @@
+PRAGMA foreign_keys=ON;
+CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS documents(
+ id TEXT PRIMARY KEY,title TEXT NOT NULL,format TEXT NOT NULL,status TEXT NOT NULL,
+ paths TEXT NOT NULL,source_ids TEXT NOT NULL,summary TEXT NOT NULL,reviews TEXT NOT NULL,bytes INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS documents_status ON documents(status);
+CREATE TABLE IF NOT EXISTS components(
+ id TEXT PRIMARY KEY,name TEXT NOT NULL,kind TEXT NOT NULL,payload TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS components_kind ON components(kind);
+CREATE TABLE IF NOT EXISTS knowledge(slug TEXT PRIMARY KEY,title TEXT NOT NULL,body TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS models(id TEXT PRIMARY KEY,title TEXT NOT NULL,path TEXT NOT NULL,payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS projects(
+ id TEXT PRIMARY KEY,name TEXT NOT NULL,template TEXT NOT NULL,version INTEGER NOT NULL,
+ created_at TEXT NOT NULL,updated_at TEXT NOT NULL,payload TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS project_revisions(
+ project_id TEXT NOT NULL,version INTEGER NOT NULL,created_at TEXT NOT NULL,payload TEXT NOT NULL,
+ PRIMARY KEY(project_id,version),FOREIGN KEY(project_id) REFERENCES projects(id)
+);
+

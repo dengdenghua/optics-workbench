@@ -1,0 +1,11 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "optics-workbench": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["-m", "optics_workbench.mcp_server"],
+      "env": {"PYTHONUTF8": "1"}
+    }
+  }
+}

@@ -1,0 +1,4 @@
+{
+  "data_dir": "./data",
+  "snapshot_note": "合成演示数据；配置 coverage_file 与 skill_dir 后可接入自己的本地资料"
+}

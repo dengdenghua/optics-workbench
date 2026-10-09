@@ -1,0 +1,162 @@
+{
+  "schema": "optics-workbench.prototype",
+  "schema_version": 1,
+  "exported_at": "2026-10-09T00:00:00+00:00",
+  "project": {
+    "name": "公开演示：紧凑光源参数原型",
+    "template": "compact",
+    "notes": "演示假设。请用自己的规格替换参数，并核对器件与波长。",
+    "parameters": {
+      "source_width_mm": 1.2,
+      "source_height_mm": 0.8,
+      "source_lumens": 2000.0,
+      "collection_half_angle_deg": 65.0,
+      "source_model": "custom",
+      "custom_collection_fraction": 0.8,
+      "output_half_angle_x_deg": 5.0,
+      "output_half_angle_y_deg": 5.0,
+      "reference_efl_mm": 10.0,
+      "pitch_x_mm": 1.0,
+      "pitch_y_mm": 0.6,
+      "cell_clear_width_mm": 1.0,
+      "cell_clear_height_mm": 0.6,
+      "cell_efl_mm": 4.0,
+      "relay_efl_mm": 36.0,
+      "wavelength_nm": 550.0,
+      "columns": 20,
+      "rows": 24,
+      "target_width_mm": 7.2,
+      "target_height_mm": 4.05,
+      "margin_mm": 0.2,
+      "n_high": 1.5,
+      "n_low": 1.0,
+      "incidence_min_deg": 46.0,
+      "incidence_max_deg": 50.0,
+      "required_margin_deg": 2.0,
+      "prism_behavior": "reflect",
+      "collimator_transmission": 0.9,
+      "flyeye_transmission": 0.9,
+      "prism_transmission": 0.92,
+      "imager_efficiency": 0.64,
+      "lens_transmission": 0.9
+    },
+    "selected_components": {}
+  },
+  "calculation": {
+    "kind": "analytical_budget",
+    "input_hash": "df9f3715e146b267ea429958b8b53eb86bb400efbba54a29f19bb274ff9c3f3f",
+    "calculator_version": "0.1.0",
+    "collimator": {
+      "axis_matched_output_width_mm": 12.478458792931374,
+      "axis_matched_output_height_mm": 8.318972528620916,
+      "source_axis_qx_mm": 1.0875693444439798,
+      "source_axis_qy_mm": 0.72504622962932,
+      "first_order_focal_estimate_x_mm": 6.858031381656805,
+      "first_order_focal_estimate_y_mm": 4.572020921104538,
+      "first_order_common_focal_estimate_mm": 6.858031381656805,
+      "normal_axis_source_G_mm2_sr": 2.477265353279793,
+      "reference_efl_output_half_angle_x_deg": 3.433630362450522,
+      "reference_efl_output_half_angle_y_deg": 2.2906100426385296
+    },
+    "flyeye": {
+      "ideal_magnification": 9.0,
+      "projected_cell_width_mm": 9.0,
+      "projected_cell_height_mm": 5.3999999999999995,
+      "target_with_margin_width_mm": 7.6000000000000005,
+      "target_with_margin_height_mm": 4.45,
+      "coverage_ratio_x": 1.1842105263157894,
+      "coverage_ratio_y": 1.2134831460674156,
+      "covers_target_rectangle": true,
+      "minimum_ideal_relay_efl_mm": 30.400000000000002,
+      "nominal_array_span_x_mm": 20.0,
+      "nominal_array_span_y_mm": 14.399999999999999,
+      "FN_x": 113.63636363636365,
+      "FN_y": 40.909090909090914
+    },
+    "prism": {
+      "supported": true,
+      "critical_angle_deg": 41.810314895778596,
+      "intended_clearance_deg": 4.189685104221404,
+      "required_margin_deg": 2.0,
+      "meets_requested_margin": true,
+      "at_requested_margin_boundary": false,
+      "intended_behavior": "reflect",
+      "minimum_incidence_deg": 46.0,
+      "maximum_incidence_deg": 50.0
+    },
+    "power": {
+      "collection_fraction": 0.8,
+      "output_lumens": 686.77632,
+      "total_efficiency": 0.3433881600000001,
+      "stages": [
+        {
+          "name": "光源",
+          "efficiency": 1.0,
+          "lumens": 2000.0
+        },
+        {
+          "name": "角度收集",
+          "efficiency": 0.8,
+          "lumens": 1600.0
+        },
+        {
+          "name": "准直组",
+          "efficiency": 0.9,
+          "lumens": 1440.0
+        },
+        {
+          "name": "复眼",
+          "efficiency": 0.9,
+          "lumens": 1296.0
+        },
+        {
+          "name": "棱镜",
+          "efficiency": 0.92,
+          "lumens": 1192.3200000000002
+        },
+        {
+          "name": "成像器件",
+          "efficiency": 0.64,
+          "lumens": 763.0848000000001
+        },
+        {
+          "name": "投影镜头",
+          "efficiency": 0.9,
+          "lumens": 686.77632
+        }
+      ]
+    },
+    "checks": [
+      {
+        "status": "ok",
+        "title": "复眼几何覆盖",
+        "detail": "按 m=f中继/f单元 计算；覆盖成立不代表均匀性或效率合格。"
+      },
+      {
+        "status": "ok",
+        "title": "棱镜内部角度裕量",
+        "detail": "使用相对界面法线的内部角，不能用空气发散角或楔角替代。"
+      },
+      {
+        "status": "ok",
+        "title": "准直焦距起算",
+        "detail": "仅理想薄透镜、源在焦面时的有限源角度估计；高 NA 仍需主平面、实际处方和光线复核。"
+      },
+      {
+        "status": "unknown",
+        "title": "照明效率与制造验证",
+        "detail": "通量链使用输入的假设比例；未评价像差、偏振、相干、热、公差或杂散光。"
+      }
+    ],
+    "assumptions": [
+      "所有默认参数是演示假设，不是任何供应商器件的实测规格。",
+      "准直的分轴扩展量匹配按空气 n=1 起算；薄透镜焦距是另一种起算关系，不输出透镜面形。",
+      "复眼使用近轴重叠成像；有效单元尺寸、节距、EFL 和波长需分别核实。",
+      "光源流明指进入收集预算前的量；角收集比例只乘一次，各下游透过率不应重复包含它。",
+      "通量连乘没有自动计入上述覆盖/角裕量失败造成的损失；有注意项时只能看条件预算。",
+      "临界角采用当前波长的实数折射率和非吸收介质；忽略膜系、有限空气隙和受抑全反射，PBS 占位不计算消光比。",
+      "自定义角收集比例为用户输入；没有已验证角分布时保持为假设。"
+    ]
+  },
+  "scope": "参数迁移文件，不附原始资料文件或原生模型；名称、备注及器件引用可能包含私人信息，分享前请检查。"
+}

@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "optics-workbench"
+version = "0.1.0"
+description = "Portable optical parameter prototypes, local evidence library and MCP tools"
+requires-python = ">=3.10"
+dependencies = []
+license = {text = "MIT"}
+
+[project.scripts]
+optics-workbench = "optics_workbench.server:main"
+optics-workbench-mcp = "optics_workbench.mcp_server:main"
+
+[tool.setuptools]
+packages = ["optics_workbench"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+optics_workbench = ["schema.sql"]
+
+[tool.setuptools.data-files]
+"share/optics-workbench/web" = ["web/index.html", "web/app.js", "web/styles.css"]
