@@ -68,4 +68,18 @@ class HttpTests(unittest.TestCase):
             status,_,raw=self.request('/api/ai/chat',body,token);self.assertEqual(status,503);self.assertIn('密钥',json.loads(raw)['error'])
         self.assertEqual(self.w.project(p['id'])['version'],p['version'])
 
+    def test_color_cases_preview_save_and_conflict(self):
+        boot=json.loads(self.request('/api/bootstrap')[2]);token={'X-Workbench-Token':boot['csrf_token'],'Origin':self.base}
+        p=self.w.project(boot['projects'][0]['id'])
+        self.assertEqual(json.loads(self.request('/api/color/cases')[2])[0]['id'],'synthetic-rgb')
+        case=json.loads(self.request('/api/color/cases/synthetic-rgb')[2]);b=case['budget']
+        self.assertFalse(json.loads(self.request('/api/projects/'+p['id']+'/color')[2])['saved'])
+        self.assertEqual(self.request('/api/color/calculate',{'budget':b})[0],403)
+        self.assertEqual(self.request('/api/color/calculate',{'budget':b},token)[0],200)
+        body={'project_id':p['id'],'version':p['version'],'budget':b}
+        status,_,raw=self.request('/api/color/save',body,token);saved=json.loads(raw)
+        self.assertEqual(status,200);self.assertEqual(saved['color_budget'],b)
+        self.assertEqual(self.request('/api/color/save',body,token)[0],400)
+        for asset in ('/color-view.js','/color-view.css'):self.assertEqual(self.request(asset)[0],200)
+
 if __name__=='__main__':unittest.main()

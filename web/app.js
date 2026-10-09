@@ -17,7 +17,7 @@
     {id: "efficiency", label: "系统预算", en: "SYSTEM BUDGET", title: "逐级效率与输出预算", icon: "↗", number: "05", description: "记录每一级假设效率，观察光通量如何沿光学链路变化。", footnote: "各级效率只有在定义与分母一致时才能相乘。不要把已含某项损失的效率再次计入；输出预算不代表通过亮度验收。"},
   ];
   const groupAliases = {source: "source", collimator: "collimator", flyeye: "flyeye", prism: "prism", efficiency: "efficiency"};
-  const viewTitles = {workspace: "参数工作台", library: "资料数据库", components: "器件参考库", knowledge: "设计知识", models: "模型索引"};
+  const viewTitles = {workspace: "参数工作台", color: "配色与亮度", library: "资料数据库", components: "器件参考库", knowledge: "设计知识", models: "模型索引"};
   const kindTitles = {collimators: "准直透镜", flyeyes: "复眼阵列", prisms: "棱镜"};
   const statusTitles = {unread: "未核读", unread_or_no_registered_review: "未登记核读", registered_partial_review: "范围性核读", partial_review: "范围性核读", reviewed: "已核读", excluded: "已排除", excluded_after_classification: "分类后排除", excluded_not_optical: "已排除（非光学）", synthetic_demo: "演示假设", historical_candidate: "历史候选", historical: "历史候选", demo: "演示假设"};
   const parameterGroups = {
@@ -97,7 +97,7 @@
     catch (error) { toast(error.message, true); }
     finally { state.busy = false; updateControls(); }
   }
-  let visual;
+  let visual, color;
   function updateControls() {
     const noProject = !state.project;
     ["#save-button", "#clone-button", "#export-button", "#calculate-button", "#project-name", "#project-notes"].forEach(selector => { $(selector).disabled = noProject || state.busy; });
@@ -108,6 +108,7 @@
     status.textContent = noProject ? "尚未载入" : state.busy ? "处理中…" : state.dirty ? "● 有未保存修改" : `已保存 · v${state.project.version ?? 1}`;
     status.classList.toggle("is-dirty", state.dirty);
     visual?.update();
+    color?.update();
   }
   function markEdited() {
     state.dirty = true;
@@ -238,6 +239,7 @@
     renderChain(); renderFields(); renderResults(); updateControls();
     $("#external-update").hidden = true;
     visual?.load(project);
+    color?.load(project);
     try { localStorage.setItem("optics-workbench:last-project", project.id); } catch { /* Persistence is optional. */ }
   }
   function confirmDiscard() {
@@ -610,6 +612,12 @@
     await withBusy(async () => { state.stats = await api("/api/sync", {}); renderStats(); navigate(state.view); toast("本地资料索引已同步。"); });
   }
   function bindEvents() {
+    color = new window.ColorView($("#view-color"), {
+      api, toast, save: saveProject, navigate, reference: openKnowledge, state: () => state,
+      select: id => { if (confirmDiscard()) loadProject(id); else color.update(); },
+      edit: budget => { if (state.project) { state.project.color_budget = budget; markEdited(); } },
+    });
+    $("#color-shortcut").onclick = () => navigate("color");
     visual = new window.OpticalView($("#visual-workspace"), {
       api, toast, busy: withBusy, adopt: adoptProject, state: () => state,
       edit: scene => { if (state.project) { state.project.scene = scene; markEdited(); } },
@@ -617,7 +625,7 @@
     $("#external-reload").onclick = () => { if (confirmDiscard()) loadProject(state.project.id); };
     $("#external-copy").onclick = () => withBusy(async () => {
       const draft = structuredClone(state.project);
-      const exported = {schema: "optics-workbench.prototype", schema_version: 1, project: {name: `${draft.name}（本地修改副本）`.slice(0,120), template: draft.template, parameters: draft.parameters, selected_components: draft.selected_components, notes: draft.notes, ...(draft.scene ? {scene: draft.scene} : {})}};
+      const exported = {schema: "optics-workbench.prototype", schema_version: 1, project: {name: `${draft.name}（本地修改副本）`.slice(0,120), template: draft.template, parameters: draft.parameters, selected_components: draft.selected_components, notes: draft.notes, ...(draft.scene ? {scene: draft.scene} : {}), ...(draft.color_budget ? {color_budget: draft.color_budget} : {})}};
       adoptProject(await api("/api/projects/import", exported)); toast("本地修改已另存为新原型。");
     });
     [["#library-search", "搜索资料"], ["#component-search", "搜索器件"], ["#knowledge-search", "搜索设计知识"], ["#models-search", "搜索模型"]].forEach(([selector, name]) => $(selector).setAttribute("aria-label", name));
@@ -646,7 +654,7 @@
     $("#dialog-close").addEventListener("click", () => $("#detail-dialog").close());
     $("#detail-dialog").addEventListener("click", event => { if (event.target === $("#detail-dialog")) { const rect = event.target.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) event.target.close(); } });
     window.addEventListener("beforeunload", event => { if (state.dirty) { event.preventDefault(); event.returnValue = ""; } });
-    document.addEventListener("keydown", event => { if ((event.ctrlKey || event.metaKey) && event.key === "s" && state.view === "workspace") { event.preventDefault(); if (!state.busy) saveProject(); } });
+    document.addEventListener("keydown", event => { if ((event.ctrlKey || event.metaKey) && event.key === "s" && ["workspace", "color"].includes(state.view)) { event.preventDefault(); if (!state.busy) saveProject(); } });
   }
   async function initialize() {
     bindEvents(); updateControls();

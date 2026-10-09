@@ -199,6 +199,11 @@ class ProtocolTests(unittest.TestCase):
 
     def test_all_adapters_route_to_contract_methods(self):
         cases = [
+            ("optics_list_color_cases", {}, "color_cases", (), {}),
+            ("optics_get_color_case", {"case_id":"demo"}, "color_case", ("demo",), {}),
+            ("optics_get_color_budget", {"project_id":"p1"}, "color_budget", ("p1",), {}),
+            ("optics_calculate_color_budget", {"budget":{}}, "calculate_color", ({},), {}),
+            ("optics_save_color_budget", {"project_id":"p1","version":2,"budget":{}}, "save_color", ("p1",2,{}), {}),
             ("optics_stats", {}, "stats", (), {}),
             ("optics_sync_knowledge", {}, "sync", (), {}),
             ("optics_search_documents", {"query": "lens", "limit": 2}, "library", (), {"query": "lens", "limit": 2}),

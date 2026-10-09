@@ -15,7 +15,7 @@ from typing import Any
 
 MODERN_VERSION = "2026-07-28"
 LEGACY_VERSIONS = ("2025-11-25", "2025-06-18", "2024-11-05")
-SERVER_INFO = {"name": "optics-workbench", "version": "0.2.0"}
+SERVER_INFO = {"name": "optics-workbench", "version": "0.3.0"}
 META_VERSION = "io.modelcontextprotocol/protocolVersion"
 META_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities"
 MAX_MESSAGE_BYTES = 2 * 1024 * 1024
@@ -53,6 +53,7 @@ _PARAMETER_UPDATES = {"type": "object", "description": (
     "units and types. Read optics_get_prototype first. Unknown keys and invalid "
     "values are rejected. Scalar budget parameters do not automatically change "
     "the independently edited scene.")}
+_COLOR = {"type": "object", "description": "Complete schema_version=1 budget from optics_get_color_budget or optics_get_color_case. Sources use XYZ mixing, explicit CW/average basis, RGB grouping, target xy, sequential/simultaneous timing, available_angle_deg, allocation solve/manual, angles_deg and screen conditions. Strictly validated by the shared calculator."}
 
 
 def _tool(name, description, properties=None, required=(), *, write=False, idempotent=True):
@@ -63,6 +64,11 @@ def _tool(name, description, properties=None, required=(), *, write=False, idemp
 
 
 TOOLS = [
+    _tool("optics_list_color_cases", "List synthetic and locally configured reviewed workbook cases, with source scope. Personal evidence stays local."),
+    _tool("optics_get_color_case", "Read one reviewed color/brightness case with inputs, original cache, independent recalculation and cell-level audit. Historical cases are not measured product specifications.", {"case_id": _IDENTIFIER}, ("case_id",)),
+    _tool("optics_get_color_budget", "Read saved color budget or unsaved synthetic default, current version and XYZ/white-point calculation.", {"project_id": _IDENTIFIER}, ("project_id",)),
+    _tool("optics_calculate_color_budget", "Preview RGB mixing, white-point timing, spoke loss, separate xy/u-prime-v-prime gamut area and intersection coverage, conditional screen lm/lx/nits, electrical/heat budget when inputs are complete. No native ray trace or measured ANSI/CVIA conversion.", {"budget": _COLOR}, ("budget",)),
+    _tool("optics_save_color_budget", "Validate and save a complete color budget at the expected project version; retain scene and scalar parameters. Reread and reconcile on conflict.", {"project_id": _IDENTIFIER, "version": _VERSION, "budget": _COLOR}, ("project_id", "version", "budget"), write=True, idempotent=False),
     _tool("optics_stats", "Read local library coverage and database counts."),
     _tool("optics_sync_knowledge", "Refresh indexes from already configured local knowledge sources; never changes source files.", write=True),
     _tool("optics_search_documents", "Search deduplicated documents; review status is not a full-reading guarantee.",
@@ -89,7 +95,7 @@ TOOLS = [
           ("project_id", "version", "scene"), write=True, idempotent=False),
     _tool("optics_apply_design", "Atomically apply a scene and/or scalar parameter updates with the expected current project version. Returns the complete project with one new version; changes are validated together. Scene and analytical budget stay separate. This does not run native optical simulation.",
           {"project_id": _IDENTIFIER, "version": _VERSION, "scene": _SCENE,
-           "parameter_updates": _PARAMETER_UPDATES, "note": {"type": "string", "maxLength": 2000}},
+           "parameter_updates": _PARAMETER_UPDATES, "color_budget": _COLOR, "note": {"type": "string", "maxLength": 2000}},
           ("project_id", "version"), write=True, idempotent=False),
     _tool("optics_create_prototype", "Create and persist a new prototype from synthetic demo parameters. Repeating creates another project.",
           {"template": {"type": "string", "enum": ["dlp", "compact"], "default": "dlp"}, "name": {"type": "string", "minLength": 1, "maxLength": 120}},
@@ -280,6 +286,11 @@ class MCPServer:
 
     def _call(self, name, args):
         wb = self.workbench
+        if name == "optics_list_color_cases": return wb.color_cases()
+        if name == "optics_get_color_case": return wb.color_case(args["case_id"])
+        if name == "optics_get_color_budget": return wb.color_budget(args["project_id"])
+        if name == "optics_calculate_color_budget": return wb.calculate_color(args["budget"])
+        if name == "optics_save_color_budget": return wb.save_color(args["project_id"], args["version"], args["budget"])
         if name == "optics_stats": return wb.stats()
         if name == "optics_sync_knowledge": return wb.sync()
         if name == "optics_search_documents": return wb.library(**args)
@@ -294,7 +305,7 @@ class MCPServer:
         if name == "optics_trace_scene": return wb.preview_scene(args["scene"])
         if name == "optics_save_scene": return wb.save_scene(args["project_id"], args["version"], args["scene"])
         if name == "optics_apply_design":
-            changes = {key: args[key] for key in ("scene", "parameter_updates", "note") if key in args}
+            changes = {key: args[key] for key in ("scene", "parameter_updates", "color_budget", "note") if key in args}
             return wb.apply_design(args["project_id"], args["version"], **changes)
         if name == "optics_create_prototype": return wb.new_project(**args)
         if name == "optics_calculate_budget": return wb.calculate(args["project"])

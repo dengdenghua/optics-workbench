@@ -57,14 +57,14 @@ Results contain `content` with serialized JSON. Successful modern and 2025 respo
 
 ## Scene editing from Codex or another MCP host
 
-The current catalog has 19 tools. Start by reading `optics_get_prototype` and `optics_get_scene` for the same project ID. `optics_get_scene` returns `{project_id, version, scene, trace}`; older projects get an unsaved default scene. The web UI reads the same project store when both processes use the same local configuration.
+The current catalog has 24 tools. Start by reading `optics_get_prototype` and `optics_get_scene` for the same project ID. `optics_get_scene` returns `{project_id, version, scene, trace}`; older projects get an unsaved default scene. The web UI reads the same project store when both processes use the same local configuration.
 
 | Tool arguments | Result and persistence |
 | --- | --- |
 | `optics_get_scene({project_id})` | Scene envelope, current version and preview; no project write |
 | `optics_trace_scene({scene})` | Validated deterministic ray fan; no project write |
 | `optics_save_scene({project_id, version, scene})` | Complete project, one new version; budget parameters preserved |
-| `optics_apply_design({project_id, version, scene?, parameter_updates?, note?})` | Complete project, one atomic new version; include a scene or parameter update, optional note ≤2000 characters |
+| `optics_apply_design({project_id, version, scene?, parameter_updates?, color_budget?, note?})` | Complete project, one atomic new version; include a scene or parameter update, optional note ≤2000 characters |
 
 `version` is the expected current positive integer, not the desired new version. A stale write returns a tool error. Reread and reconcile the latest project instead of blindly retrying. Unknown parameter names or invalid scene fields are rejected by the shared core; a failed combined update does not partially save either part. `--read-only` advertises both scene read tools and blocks both scene write tools, including direct calls to hidden tools.
 
@@ -114,3 +114,9 @@ Run the dependency-free suite with `python -m unittest discover -s tests -p test
 MCP only accesses the locally configured workbench. No tool runs arbitrary code, downloads files, accepts new source filesystem paths, modifies original documents or publishes anything. `--read-only` removes mutation tools; startup may still initialize the local database, so this flag is not an operating-system filesystem sandbox.
 
 Private record text and source locations returned by read tools can be sent to the MCP client's model provider as tool context. Choose the data sources and client accordingly. An export excludes source text and machine paths, but user-entered names, notes and scene labels may themselves be confidential: review the exported JSON before public sharing. Private knowledge/database migration is an explicit separate transfer, not part of a public plugin package.
+
+## Color and brightness
+
+Read `optics_list_color_cases` and `optics_get_color_case(case_id)` for local reviewed evidence, cache/recalculation comparisons and source scope. Public-only installations offer a synthetic case. For a project read `optics_get_color_budget(project_id)`; its `saved` flag distinguishes an unsaved default. Edit a copy of `budget`, preview with `optics_calculate_color_budget(budget)`, then save with `optics_save_color_budget(project_id, version, budget)` or the optional `color_budget` argument of `optics_apply_design`. The complete budget and recomputed result are versioned together. Scene and scalar inputs are preserved.
+
+Unknown fields, nonfinite inputs, impossible automatic white points and stale versions fail without partial saves. An average source input cannot be reverse-solved as CW timing. Keep source/receiving-plane units explicit. Neither gamut area nor ray-count ratios are optical efficiency; predicted screen lumens are not measured ANSI/CVIA. See [formulas](color-brightness.md). Export includes saved color inputs but not workbook evidence. Personal values may be present in those inputs; inspect before sharing.

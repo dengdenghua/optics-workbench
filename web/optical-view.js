@@ -31,7 +31,7 @@ window.OpticalView = class {
     }); this.right.append(rayBox);
     this.chat = make("section", "optics-chat panel");
     this.chat.append(make("h2", "", "AI 设计助理")); this.status = make("p", "optics-caption", "读取 AI 连接状态…");
-    this.chat.append(this.status, make("p", "optics-caption", "内置聊天发送当前原型参数、光路和本面板对话到 OpenAI。修改成功后保存一个新版本；原始资料不随请求发送。"));
+    this.chat.append(this.status, make("p", "optics-caption", "内置聊天发送当前原型参数、光路、已保存配色预算和本面板对话到 OpenAI。修改成功后保存一个新版本；原始资料不随请求发送。"));
     this.messages = make("div", "optics-messages"); this.messages.setAttribute("role", "log"); this.messages.setAttribute("aria-live", "polite");
     this.prompt = make("textarea"); this.prompt.rows = 3; this.prompt.maxLength = 6000; this.prompt.placeholder = "例如：将准直透镜焦距改为 20 mm，检查代表光线是否被孔径截断。"; this.prompt.setAttribute("aria-label", "AI 设计指令");
     this.send = btn("发送给内置 AI", () => this.ask()); this.copy = btn("复制给 Codex / MCP", () => this.copyPrompt());

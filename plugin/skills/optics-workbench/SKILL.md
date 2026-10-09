@@ -34,3 +34,9 @@ Use `optics_save_prototype` with the latest full project and version. A conflict
 `optics_export_prototype` returns portable JSON, including an optional saved scene. It omits machine paths and private source text; inspect user-entered names, notes and scene labels before public sharing. `optics_import_prototype` validates that JSON and creates a new local project with its scene preserved. Parameter/scene migration is separate from transferring a private knowledge database or proprietary optical models. Existing scene data is retained when a legacy `optics_save_prototype` client omits it.
 
 Call `optics_sync_knowledge` only to refresh sources already configured by the local operator. No tool accepts an arbitrary source path, writes original documents, uploads data, opens optical applications or installs software. Connecting this local server allows the MCP client to read the configured records; those tool results may enter the client's model context.
+
+## 配色与亮度原型
+
+先用 optics_list_color_cases / optics_get_color_case 检查本机案例的来源、核读范围、缓存对照及单元格审计，再用 optics_get_color_budget 读取目标原型、当前版本及 saved 标志。合成默认不代表已保存。光源坐标与通量先转XYZ相加，同RGB组共用时序；区分输出光学W、泵浦W、电学W以及CW与全周期平均量。不要直接平均xy、重复乘占空比、裁去负通道后声称达到白点、用面积比声称色域覆盖，或用固定倍率声称ANSI/CVIA实测。
+
+编辑完整预算副本，用 optics_calculate_color_budget 复核，再以当前版本调用 optics_save_color_budget；组合编辑可用 optics_apply_design 的 color_budget。保存保留光路和标量预算，三模块的效率不会自动联乘。迁移包含配色输入，检查私人参数和来源定位后再公开。个人证据和原始表格不随公开插件分发。

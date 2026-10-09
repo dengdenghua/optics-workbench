@@ -12,6 +12,8 @@ from datetime import datetime,timezone
 import uuid
 from .calculations import calculate,template_parameters,TEMPLATES,FIELDS
 from .scene import default_scene,validate_scene,trace_scene
+from .color import validate as validate_color, calculate as calculate_color, default_budget
+from .color_cases import all_cases
 
 def now():return datetime.now(timezone.utc).isoformat(timespec='seconds')
 def dumps(v):return json.dumps(v,ensure_ascii=False,allow_nan=False,separators=(',',':'))
@@ -204,6 +206,8 @@ class Workbench:
         if not isinstance(notes,str) or len(notes)>20000:raise ValueError('备注过长或类型错误')
         result=self.calculate(data)
         scene=validate_scene(data['scene']) if 'scene' in data else None
+        color=validate_color(data['color_budget']) if 'color_budget' in data else None
+        color_result=calculate_color(color) if color is not None else None
         selected=data.get('selected_components',{})
         if not isinstance(selected,dict) or set(selected)-{'collimators','flyeyes','prisms'}:raise ValueError('器件引用格式错误')
         if any(v is not None and (not isinstance(v,str) or len(v)>250) for v in selected.values()):raise ValueError('器件 ID 格式错误')
@@ -217,11 +221,17 @@ class Workbench:
                 if cid and not db.execute('SELECT 1 FROM components WHERE id=? AND kind=?',(cid,kind)).fetchone():raise ValueError('选中的器件不存在或类型不符，请重新选择：'+cid)
             stamp=now();version=row['version']+1 if row else 1
             project=dict(id=pid,name=name,template=str(data.get('template','dlp'))[:30],notes=notes,parameters=data['parameters'],selected_components=selected,version=version,created_at=row['created_at'] if row else stamp,updated_at=stamp,calculation=result)
-            # Older clients may omit scene. Never erase a saved layout that way.
+            # Older clients may omit optional modules. Preserve their state.
             if scene is not None:project['scene']=scene
             elif row:
                 previous=loads(row['payload'])
                 if 'scene' in previous:project['scene']=previous['scene']
+            if color is not None:
+                project['color_budget']=color;project['color_calculation']=color_result
+            elif row:
+                previous=loads(row['payload'])
+                if 'color_budget' in previous:
+                    project['color_budget']=previous['color_budget'];project['color_calculation']=calculate_color(previous['color_budget'])
             encoded=dumps(project)
             db.execute('INSERT INTO projects VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,template=excluded.template,version=excluded.version,updated_at=excluded.updated_at,payload=excluded.payload',(pid,name,project['template'],version,project['created_at'],stamp,encoded))
             db.execute('INSERT INTO project_revisions VALUES(?,?,?,?)',(pid,version,stamp,encoded))
@@ -231,6 +241,7 @@ class Workbench:
         p=self.project(project_id)
         fields={k:p[k] for k in ('name','template','notes','parameters','selected_components')}
         if 'scene' in p:fields['scene']=p['scene']
+        if 'color_budget' in p:fields['color_budget']=p['color_budget']
         return dict(schema='optics-workbench.prototype',schema_version=1,exported_at=now(),project=fields,calculation=p['calculation'],scope='参数迁移文件，不附原始资料文件或原生模型；名称、备注及器件引用可能包含私人信息，分享前请检查。')
 
     def import_project(self,payload):
@@ -239,6 +250,7 @@ class Workbench:
         if not isinstance(raw.get('selected_components',{}),dict):raise ValueError('器件引用格式错误')
         p={k:raw.get(k) for k in ('name','template','notes','parameters')};p['selected_components']={}
         if 'scene' in raw:p['scene']=validate_scene(raw['scene'])
+        if 'color_budget' in raw:p['color_budget']=validate_color(raw['color_budget'])
         missing=[]
         with self.connect() as db:
             for kind,cid in raw.get('selected_components',{}).items():
@@ -259,14 +271,34 @@ class Workbench:
     def save_scene(self,project_id,version,scene):
         return self.apply_design(project_id,version,scene=scene)
 
-    def apply_design(self,project_id,version,scene=None,parameter_updates=None,note=''):
+    def color_cases(self):
+        cases=all_cases(self._path(self.config['skill_dir']) if self.config.get('skill_dir') else None)
+        return [{k:c.get(k) for k in ('id','title','source_id','sheet','scope')} for c in cases]
+
+    def color_case(self,case_id):
+        cases=all_cases(self._path(self.config['skill_dir']) if self.config.get('skill_dir') else None)
+        match=next((c for c in cases if c['id']==case_id),None)
+        if match is None:raise ValueError('配色案例未找到；个人案例需要本机Skill配置')
+        return match
+
+    def color_budget(self,project_id):
+        p=self.project(project_id);b=p.get('color_budget') or default_budget()
+        return dict(project_id=p['id'],version=p['version'],budget=b,calculation=calculate_color(b),saved='color_budget' in p)
+
+    def calculate_color(self,budget):return calculate_color(budget)
+
+    def save_color(self,project_id,version,budget):
+        return self.apply_design(project_id,version,color_budget=budget)
+
+    def apply_design(self,project_id,version,scene=None,parameter_updates=None,note='',color_budget=None):
         if isinstance(version,bool) or not isinstance(version,int) or version<1:
             raise ValueError('请提供当前原型的整数版本')
         if not isinstance(note,str) or len(note)>2000:raise ValueError('设计说明应为不超过2000字的文本')
-        if scene is None and parameter_updates is None:raise ValueError('没有提供光路或参数修改')
+        if scene is None and parameter_updates is None and color_budget is None:raise ValueError('没有提供光路或参数修改')
         p=copy.deepcopy(self.project(project_id))
         if p['version']!=version:raise ValueError('原型已由另一个窗口更新，请重新加载后再保存')
         if scene is not None:p['scene']=validate_scene(scene)
+        if color_budget is not None:p['color_budget']=validate_color(color_budget)
         if parameter_updates is not None:
             if not isinstance(parameter_updates,dict) or set(parameter_updates)-set(p['parameters']):raise ValueError('参数修改包含未知字段')
             p['parameters'].update(parameter_updates)

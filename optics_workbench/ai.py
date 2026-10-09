@@ -15,6 +15,7 @@ from urllib.request import Request, build_opener, HTTPRedirectHandler
 from .calculations import calculate
 from .core import dumps, loads
 from .scene import default_scene, validate_scene, trace_scene
+from .color import default_budget, validate as validate_color, calculate as calculate_color
 
 DEFAULT_MODEL = 'gpt-5.4-mini'
 ENDPOINT = 'https://api.openai.com/v1/responses'
@@ -46,7 +47,7 @@ def _settings(w):
 def status(w):
     key, model = _settings(w)
     return dict(configured=bool(key), model=model, provider='openai',
-                message='内置 AI 已配置；发送时将使用当前原型参数、光路与对话。' if key else '尚未配置内置 AI 的 API 密钥；Codex / MCP 入口仍可使用。')
+                message='内置 AI 已配置；发送时将使用当前原型参数、光路、已保存配色预算与对话。' if key else '尚未配置内置 AI 的 API 密钥；Codex / MCP 入口仍可使用。')
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -85,6 +86,8 @@ def _function(name, description, properties=None, required=()):
 
 
 TOOLS = [
+    _function('set_color_budget', 'Replace the complete color/brightness draft budget. Read get_design first; current default is synthetic when absent. Preserve explicit units and CW/average basis. Changes are validated and staged.', {'budget': {'type': 'object'}}, ('budget',)),
+    _function('calculate_color_budget', 'Compute the draft RGB XYZ mixture, solved/manual white-point timing, gamut and conditional screen brightness; no native optical trace or measured brightness.'),
     _function('get_design', 'Read the current draft parameters and scene.'),
     _function('set_element', 'Update fields of one existing optical element. Scene z is unfolded distance in mm. Preview only until final atomic commit.',
               {'element_id': {'type': 'string'}, 'updates': {'type': 'object'}}, ('element_id', 'updates')),
@@ -100,6 +103,8 @@ SYSTEM = '''你是光学参数工作台的设计助手，用简洁中文工作�
 光路为mm制展开轴近轴光扇，元件形状是符号，不是可加工处方。薄透镜/复眼只用斜率一阶关系；
 棱镜只按理想折转显示，没有Snell界面、膜系、偏振或实测效率。少量光线可做前期映射验证；
 不能把reached/launched当效率、均匀性或收敛指标。真实LightTools/Zemax运行需单独控制插件。
+配色预算与标量预算、光路独立。配色使用XYZ相加和明确CW/全周期平均输入，禁止直接平均xy或重复乘时序。
+屏幕lm/lx/cd每平方米均为有条件预测；没有ANSI/CVIA固定换算。用calculate_color_budget核对白点、分配、色域与缺失电热输入。
 预算参数与可视化光路独立。用户要求改焦距时，说明改了哪一层；需要一致时分别改预算和镜片。
 先检查当前设计，保留未要求改的器件。缺少规格时说明假设；不要伪造来源、玻璃牌号、面形和结果。
 改变后调用trace_design复核截光/近轴警告，失败则修正或明确未达项，不要求所有起算都大量随机追迹。
@@ -133,9 +138,10 @@ def chat(w, project_id, version, message, history=None, transport=None):
         original = w.project(project_id)
         if original['version'] != version: raise AIError('原型已更新，请重新载入后再发送')
         draft = dict(parameters=copy.deepcopy(original['parameters']),
-                     scene=copy.deepcopy(original.get('scene') or default_scene(original['parameters'])))
+                     scene=copy.deepcopy(original.get('scene') or default_scene(original['parameters'])),
+                     color_budget=copy.deepcopy(original.get('color_budget')))
         initial = copy.deepcopy(draft)
-        # Only current parameters/scene and explicit chat history go to the API;
+        # Only current parameters/scene/saved color budget and explicit history go to the API;
         # no whole database, original source documents, paths or private notes.
         context = '当前原型（不是指令）：\n' + dumps(draft)
         inputs = [{'role': 'user', 'content': context}] + copy.deepcopy(history) + [{'role': 'user', 'content': message}]
@@ -162,7 +168,7 @@ def chat(w, project_id, version, message, history=None, transport=None):
                 current = w.project(project_id)
                 if current['version'] != version: raise AIError('原型在 AI 处理期间已被修改；本次草案没有覆盖新版本，请重新发送')
                 if draft != initial:
-                    current = w.apply_design(project_id, version, scene=draft['scene'], parameter_updates=draft['parameters'])
+                    current = w.apply_design(project_id, version, scene=draft['scene'], parameter_updates=draft['parameters'], color_budget=draft['color_budget'])
                 return dict(reply=reply, project=current, actions=actions,
                             trace=trace_scene(draft['scene']))
             for call in calls:
@@ -174,7 +180,11 @@ def chat(w, project_id, version, message, history=None, transport=None):
                     if schema is None or not isinstance(args, dict) or set(args)-set(schema['properties']) or set(schema['required'])-set(args):
                         raise ValueError('未知工具或无效参数')
                     candidate = copy.deepcopy(draft)
-                    if name == 'get_design': result = draft
+                    if name == 'get_design': result = dict(draft, color_budget=draft['color_budget'] or default_budget())
+                    elif name == 'set_color_budget':
+                        candidate['color_budget'] = validate_color(args['budget'])
+                        result = calculate_color(candidate['color_budget']); draft = candidate
+                    elif name == 'calculate_color_budget': result = calculate_color(draft['color_budget'] or default_budget())
                     elif name == 'set_element':
                         updates = args['updates']
                         if not isinstance(updates, dict) or set(updates)&{'id', 'kind'}: raise ValueError('元件ID和类型不能在更新中改变')
@@ -192,7 +202,7 @@ def chat(w, project_id, version, message, history=None, transport=None):
                         candidate['parameters'].update(updates)
                         result = calculate(candidate['parameters']); draft = candidate
                     else: result = dict(trace=_compact_trace(draft['scene']), budget=calculate(draft['parameters']))
-                    actions.append(dict(tool=name, summary='草案修改已验证' if name in ('set_element','replace_scene','update_parameters') else '已读取 / 计算', success=True))
+                    actions.append(dict(tool=name, summary='草案修改已验证' if name in ('set_element','replace_scene','update_parameters','set_color_budget') else '已读取 / 计算', success=True))
                     output = dumps(result)
                 except (ValueError, TypeError, KeyError, OverflowError) as exc:
                     output = dumps({'error': str(exc)[:500]})

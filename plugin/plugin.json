@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "optics-workbench",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Edit portable optical scenes, preview paraxial ray fans and calculate evidence-based parameter budgets through MCP.",
   "keywords": ["optics", "projection", "prototyping", "mcp"]
 }

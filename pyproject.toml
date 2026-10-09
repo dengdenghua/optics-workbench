@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "optics-workbench"
-version = "0.2.0"
+version = "0.3.0"
 description = "AI-driven optical prototypes, interactive ray layouts, local evidence and MCP tools"
 requires-python = ">=3.10"
 dependencies = []
@@ -22,4 +22,4 @@ include-package-data = true
 optics_workbench = ["schema.sql"]
 
 [tool.setuptools.data-files]
-"share/optics-workbench/web" = ["web/index.html", "web/app.js", "web/styles.css", "web/optical-view.js", "web/optical-view.css"]
+"share/optics-workbench/web" = ["web/index.html", "web/app.js", "web/styles.css", "web/optical-view.js", "web/optical-view.css", "web/color-view.js", "web/color-view.css"]

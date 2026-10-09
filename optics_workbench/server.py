@@ -23,7 +23,7 @@ class Server(ThreadingHTTPServer):
         super().__init__(('127.0.0.1',port),Handler)
 
 class Handler(BaseHTTPRequestHandler):
-    server_version='OpticsWorkbench/0.2'
+    server_version='OpticsWorkbench/0.3'
     def log_message(self,fmt,*args):
         # Avoid logging query terms, local paths, or user-provided document content.
         pass
@@ -69,12 +69,15 @@ class Handler(BaseHTTPRequestHandler):
             elif path=='/api/models':result=w.models(q('q'))
             elif path=='/api/projects':result=w.projects()
             elif path=='/api/ai/status':result=ai.status(w)
+            elif path=='/api/color/cases':result=w.color_cases()
+            elif path.startswith('/api/color/cases/'):result=w.color_case(path[len('/api/color/cases/'):])
             elif path.startswith('/api/projects/'):
                 rest=path[len('/api/projects/'):]
                 if rest.endswith('/export'):return self.send_data(200,w.export_project(rest[:-len('/export')]),attachment=True)
                 if rest.endswith('/scene'):result=w.scene(rest[:-len('/scene')])
+                elif rest.endswith('/color'):result=w.color_budget(rest[:-len('/color')])
                 else:result=w.project(rest)
-            elif path in ('/','/index.html','/app.js','/styles.css','/optical-view.js','/optical-view.css'):
+            elif path in ('/','/index.html','/app.js','/styles.css','/optical-view.js','/optical-view.css','/color-view.js','/color-view.css'):
                 filename='index.html' if path=='/' else path[1:]
                 target=self.server.web_dir/filename
                 if not target.is_file():return self.send_data(404,dict(error='前端资源未安装'))
@@ -101,7 +104,9 @@ class Handler(BaseHTTPRequestHandler):
             elif path=='/api/projects/import':result=w.import_project(data)
             elif path=='/api/scene/trace':result=w.preview_scene(data.get('scene'))
             elif path=='/api/scene/save':result=w.save_scene(data.get('project_id'),data.get('version'),data.get('scene'))
-            elif path=='/api/design/apply':result=w.apply_design(data.get('project_id'),data.get('version'),scene=data.get('scene'),parameter_updates=data.get('parameter_updates'),note=data.get('note',''))
+            elif path=='/api/design/apply':result=w.apply_design(data.get('project_id'),data.get('version'),scene=data.get('scene'),parameter_updates=data.get('parameter_updates'),note=data.get('note',''),color_budget=data.get('color_budget'))
+            elif path=='/api/color/calculate':result=w.calculate_color(data.get('budget'))
+            elif path=='/api/color/save':result=w.save_color(data.get('project_id'),data.get('version'),data.get('budget'))
             elif path=='/api/ai/chat':result=ai.chat(w,data.get('project_id'),data.get('version'),data.get('message'),history=data.get('history'))
             else:return self.send_data(404,dict(error='路径不存在'))
             self.send_data(200,result)
